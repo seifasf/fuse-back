@@ -79,7 +79,7 @@ export const getHomeContent = asyncHandler(async (req, res) => {
   ]);
 
   res.json({
-    content: content || { stats: { eventsThrown: 120, countries: 2, guestsHosted: 80000 }, sections: [] },
+    content: content || { stats: { eventsThrown: 0, countries: 2, guestsHosted: 0 }, sections: [] },
     featuredEvent,
     upcomingEvents,
     characters,

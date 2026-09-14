@@ -17,6 +17,9 @@ import analyticsRoutes from './src/routes/analyticsRoutes.js';
 
 const app = express();
 
+// Render terminates TLS and forwards via proxy — required for rate limits + secure cookies
+app.set('trust proxy', 1);
+
 // Security HTTP Headers
 app.use(
   helmet({
@@ -28,11 +31,23 @@ app.use(
 );
 
 // Strict CORS with whitelist validation
-const allowedOrigins = [env.clientUrl, 'http://localhost:5173', 'http://127.0.0.1:5173'].filter(Boolean);
+const allowedOrigins = [
+  env.clientUrl,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+].filter(Boolean);
+
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      // Allow Vercel preview deployments when CLIENT_URL is a production Vercel host
+      if (
+        origin.endsWith('.vercel.app') &&
+        (env.clientUrl?.includes('vercel.app') || env.nodeEnv !== 'production')
+      ) {
         return callback(null, true);
       }
       return callback(new Error('CORS access denied: origin not allowed'));

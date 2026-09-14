@@ -1,0 +1,52 @@
+# Render Blueprint — FUSE API
+# Dashboard: New ? Blueprint ? connect fuse-back repo
+# Database: MongoDB Atlas (set MONGODB_URI). Not using Render Postgres.
+
+services:
+  - type: web
+    name: fuse-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: QR_SECRET
+        generateValue: true
+      - key: ADMIN_SECURITY_KEY
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: API_PUBLIC_URL
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: EMAIL_FROM
+        value: fuse.contact@fuseevents.net
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_ID
+        sync: false
+      - key: PAYMOB_API_KEY
+        sync: false
+      - key: PAYMOB_INTEGRATION_ID
+        sync: false
+      - key: MYFATOORAH_API_KEY
+        sync: false

@@ -4,13 +4,12 @@ import { TicketTier } from '../models/TicketTier.js';
 import { Ticket } from '../models/Ticket.js';
 import { getPaymentProvider } from '../services/payments/index.js';
 import { generateTicketQrDataUrl, getQrPayload } from '../services/ticketQr.js';
-import { sendTicketEmail } from '../services/email.js';
-import { sendTicketWhatsApp } from '../services/whatsapp.js';
 import { generateTicketCode } from '../utils/ticketCode.js';
 import { currencyForCountry } from '../models/constants.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
+import QRCode from 'qrcode';
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider } = req.body;
@@ -81,9 +80,33 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   const booking = await Booking.findById(bookingId).populate('eventId');
   if (!booking) throw new AppError('Booking not found', 404, 'NOT_FOUND');
 
+  const formatTickets = async (ticketDocs) => {
+    const out = [];
+    for (const t of ticketDocs) {
+      const qrDataUrl = t.qrPayload
+        ? await QRCode.toDataURL(t.qrPayload, { margin: 1, width: 300 })
+        : await generateTicketQrDataUrl(t._id, booking._id, t.eventId);
+      out.push({
+        id: t._id,
+        code: t.code,
+        status: t.status,
+        tierName: t.tierName,
+        eventTitle: t.eventTitle,
+        holderName: t.holderName,
+        qrDataUrl,
+      });
+    }
+    return out;
+  };
+
   if (booking.status === 'paid') {
-    const tickets = await Ticket.find({ bookingId }).lean();
-    return res.json({ booking, tickets, alreadyPaid: true });
+    const existing = await Ticket.find({ bookingId });
+    return res.json({
+      booking,
+      tickets: await formatTickets(existing),
+      alreadyPaid: true,
+      delivery: 'download',
+    });
   }
 
   if (booking.status !== 'pending') {
@@ -99,7 +122,6 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   const eventTitle = eventDoc.title || booking.eventSnapshot?.title || 'FUSE Event';
 
   const tickets = [];
-  const qrDataUrls = [];
 
   for (const item of booking.items) {
     for (let i = 0; i < item.qty; i++) {
@@ -119,51 +141,20 @@ export const confirmPayment = asyncHandler(async (req, res) => {
       const qrPayload = getQrPayload(ticket._id, booking._id, eventId);
       ticket.qrPayload = qrPayload;
       await ticket.save();
-
-      const qrDataUrl = await generateTicketQrDataUrl(ticket._id, booking._id, eventId);
       tickets.push(ticket);
-      qrDataUrls.push({ ticketId: ticket._id, code: ticket.code, qrDataUrl });
     }
 
     await TicketTier.findByIdAndUpdate(item.tierId, { $inc: { sold: item.qty } });
   }
 
   await Event.findByIdAndUpdate(eventId, { $inc: { ticketsSold: booking.ticketCount } });
-
-  try {
-    await sendTicketEmail({
-      to: booking.guest.email,
-      name: booking.guest.name,
-      eventTitle,
-      tickets: qrDataUrls,
-    });
-    booking.emailSentAt = new Date();
-  } catch (err) {
-    console.error('Email delivery failed:', err.message);
-  }
-
-  try {
-    await sendTicketWhatsApp({
-      phone: booking.guest.phone,
-      name: booking.guest.name,
-      eventTitle,
-      ticketCount: tickets.length,
-    });
-    booking.whatsappSentAt = new Date();
-  } catch (err) {
-    console.error('WhatsApp delivery failed:', err.message);
-  }
-
   await booking.save();
 
+  // Email / WhatsApp disabled until providers are connected — tickets are downloadable in the UI
   res.json({
     booking,
-    tickets: tickets.map((t) => ({
-      id: t._id,
-      code: t.code,
-      status: t.status,
-      tierName: t.tierName,
-    })),
+    tickets: await formatTickets(tickets),
+    delivery: 'download',
   });
 });
 

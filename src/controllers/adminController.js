@@ -74,21 +74,81 @@ export const adminDeleteTier = asyncHandler(async (req, res) => {
 
 /* ??? Characters ???????????????????????????????????????????? */
 
+async function uniqueCharacterSlug(name, excludeId = null) {
+  const base = slugify(name) || 'artist';
+  let candidate = base;
+  let n = 2;
+  while (true) {
+    const existing = await Character.findOne({
+      slug: candidate,
+      ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+    }).select('_id');
+    if (!existing) return candidate;
+    candidate = `${base}-${n++}`;
+  }
+}
+
+function sanitizeCharacterBody(body = {}) {
+  const data = { ...body };
+  if (!data.country) delete data.country;
+  if (Array.isArray(data.tags)) {
+    data.tags = data.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 20);
+  }
+  if (typeof data.name === 'string') data.name = data.name.trim();
+  if (typeof data.bio === 'string') data.bio = data.bio.trim();
+  if (typeof data.image === 'string') data.image = data.image.trim();
+  return data;
+}
+
 export const adminListCharacters = asyncHandler(async (req, res) => {
   const characters = await Character.find({ deletedAt: null }).sort({ name: 1 }).lean();
   res.json({ characters });
 });
 
 export const adminCreateCharacter = asyncHandler(async (req, res) => {
-  const data = { ...req.body };
-  if (!data.slug) data.slug = slugify(data.name);
-  const character = await Character.create(data);
-  res.status(201).json({ character });
+  const data = sanitizeCharacterBody(req.body);
+  if (!data.name) throw new AppError('Artist name is required', 400, 'VALIDATION_ERROR');
+
+  data.slug = await uniqueCharacterSlug(data.name);
+  data.deletedAt = null;
+
+  try {
+    const character = await Character.create(data);
+    res.status(201).json({ character });
+  } catch (err) {
+    if (err?.code === 11000) {
+      throw new AppError('An artist with this name already exists', 409, 'CONFLICT');
+    }
+    if (err?.name === 'ValidationError') {
+      throw new AppError(err.message, 400, 'VALIDATION_ERROR');
+    }
+    throw err;
+  }
 });
 
 export const adminUpdateCharacter = asyncHandler(async (req, res) => {
-  const character = await Character.findByIdAndUpdate(req.params.id, req.body, { new: true });
-  res.json({ character });
+  const data = sanitizeCharacterBody(req.body);
+  if (data.name && !data.slug) {
+    data.slug = await uniqueCharacterSlug(data.name, req.params.id);
+  }
+
+  try {
+    const character = await Character.findByIdAndUpdate(req.params.id, data, {
+      new: true,
+      runValidators: true,
+    });
+    if (!character) throw new AppError('Artist not found', 404, 'NOT_FOUND');
+    res.json({ character });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err?.code === 11000) {
+      throw new AppError('An artist with this name already exists', 409, 'CONFLICT');
+    }
+    if (err?.name === 'ValidationError') {
+      throw new AppError(err.message, 400, 'VALIDATION_ERROR');
+    }
+    throw err;
+  }
 });
 
 export const adminDeleteCharacter = asyncHandler(async (req, res) => {
@@ -355,7 +415,7 @@ export const adminListClients = asyncHandler(async (req, res) => {
 });
 
 export const adminIssueManualTicket = asyncHandler(async (req, res) => {
-  const { eventId, tierId, qty = 1, guest, sendEmail = true, sendWhatsApp = false, note = '' } = req.body;
+  const { eventId, tierId, qty = 1, guest, sendEmail = false, sendWhatsApp = false, note = '' } = req.body;
 
   if (!eventId || !tierId || !guest?.name || !guest?.email || !guest?.phone) {
     throw new AppError('Event, tier, and guest name/email/phone are required', 400, 'VALIDATION_ERROR');
@@ -431,6 +491,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   await TicketTier.findByIdAndUpdate(tier._id, { $inc: { sold: quantity } });
   await Event.findByIdAndUpdate(event._id, { $inc: { ticketsSold: quantity } });
 
+  // Optional delivery — off by default until SMTP / WhatsApp are connected
   if (sendEmail) {
     try {
       await sendTicketEmail({
@@ -463,15 +524,103 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     booking,
-    tickets: tickets.map((t) => ({
+    tickets: tickets.map((t, i) => ({
       id: t._id,
       code: t.code,
       status: t.status,
       tierName: t.tierName,
-      qrPayload: t.qrPayload,
+      eventTitle: t.eventTitle,
+      qrDataUrl: qrDataUrls[i].qrDataUrl,
     })),
     emailSent: Boolean(booking.emailSentAt),
     whatsappSent: Boolean(booking.whatsappSentAt),
+    delivery: 'download',
+  });
+});
+
+/** Door ops: events with guest / check-in counts */
+export const adminDoorEvents = asyncHandler(async (req, res) => {
+  const events = await Event.find({ deletedAt: null }).sort({ startsAt: -1 }).lean();
+  const stats = await Ticket.aggregate([
+    {
+      $group: {
+        _id: '$eventId',
+        totalGuests: { $sum: 1 },
+        joined: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+        pending: { $sum: { $cond: [{ $eq: ['$status', 'valid'] }, 1, 0] } },
+      },
+    },
+  ]);
+  const byEvent = Object.fromEntries(stats.map((s) => [String(s._id), s]));
+
+  res.json({
+    events: events.map((e) => {
+      const s = byEvent[String(e._id)] || { totalGuests: 0, joined: 0, pending: 0 };
+      return {
+        ...e,
+        totalGuests: s.totalGuests,
+        joinedCount: s.joined,
+        pendingCount: s.pending,
+        joinRate: s.totalGuests ? Math.round((s.joined / s.totalGuests) * 100) : 0,
+      };
+    }),
+  });
+});
+
+/** Door ops: people coming to one event + joined status */
+export const adminDoorEventGuests = asyncHandler(async (req, res) => {
+  const { eventId } = req.params;
+  const { q = '', status = 'all' } = req.query;
+
+  const event = await Event.findOne({ _id: eventId, deletedAt: null }).lean();
+  if (!event) throw new AppError('Event not found', 404, 'NOT_FOUND');
+
+  const filter = { eventId };
+  if (status === 'joined') filter.status = 'used';
+  else if (status === 'pending') filter.status = 'valid';
+  else if (status === 'cancelled') filter.status = { $in: ['cancelled', 'refunded'] };
+
+  if (q && String(q).trim()) {
+    const term = String(q).trim();
+    filter.$or = [
+      { holderName: { $regex: term, $options: 'i' } },
+      { holderEmail: { $regex: term, $options: 'i' } },
+      { holderPhone: { $regex: term, $options: 'i' } },
+      { code: { $regex: term, $options: 'i' } },
+      { tierName: { $regex: term, $options: 'i' } },
+    ];
+  }
+
+  const [guests, total, joined, pending] = await Promise.all([
+    Ticket.find(filter)
+      .sort({ scannedAt: -1, createdAt: -1 })
+      .limit(500)
+      .lean(),
+    Ticket.countDocuments({ eventId }),
+    Ticket.countDocuments({ eventId, status: 'used' }),
+    Ticket.countDocuments({ eventId, status: 'valid' }),
+  ]);
+
+  res.json({
+    event,
+    summary: {
+      total,
+      joined,
+      pending,
+      joinRate: total ? Math.round((joined / total) * 100) : 0,
+    },
+    guests: guests.map((g) => ({
+      id: g._id,
+      name: g.holderName,
+      email: g.holderEmail,
+      phone: g.holderPhone,
+      code: g.code,
+      tierName: g.tierName,
+      status: g.status,
+      joined: g.status === 'used',
+      scannedAt: g.scannedAt || null,
+      createdAt: g.createdAt,
+    })),
   });
 });
 

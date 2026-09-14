@@ -9,6 +9,7 @@ import {
   adminGetSections, adminUpdateSections, adminAddSection, adminUpdateSection, adminDeleteSection,
   adminAddBanner, adminDeleteBanner,
   adminListClients, adminIssueManualTicket,
+  adminDoorEvents, adminDoorEventGuests,
 } from '../controllers/adminController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { uploadMiddleware, uploadImage, deleteMedia } from '../controllers/uploadController.js';
@@ -46,6 +47,10 @@ router.get('/bookings/:id/tickets', adminGetBookingTickets);
 // Clients & manual tickets
 router.get('/clients', adminListClients);
 router.post('/tickets/manual', adminIssueManualTicket);
+
+// Door attendance
+router.get('/door/events', adminDoorEvents);
+router.get('/door/events/:eventId/guests', adminDoorEventGuests);
 
 // Agents
 router.get('/agents', adminListAgents);

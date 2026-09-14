@@ -5,10 +5,11 @@ import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
 
+// Cross-site (Vercel front ↔ Render API) needs SameSite=None + Secure.
 const cookieOptions = {
   httpOnly: true,
   secure: env.nodeEnv === 'production',
-  sameSite: env.nodeEnv === 'production' ? 'strict' : 'lax',
+  sameSite: env.nodeEnv === 'production' ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
@@ -148,7 +149,11 @@ export const verifyAdminKey = asyncHandler(async (req, res) => {
 });
 
 export const logout = asyncHandler(async (req, res) => {
-  res.clearCookie('token');
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: env.nodeEnv === 'production',
+    sameSite: env.nodeEnv === 'production' ? 'none' : 'lax',
+  });
   res.json({ message: 'Logged out' });
 });
 
