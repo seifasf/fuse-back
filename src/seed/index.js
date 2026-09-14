@@ -20,7 +20,9 @@ const DEFAULT_SECTIONS = [
   { id: 'upcoming_events', type: 'upcoming_events', label: 'Upcoming Events', visible: true, order: 2, config: {} },
   { id: 'characters', type: 'characters', label: 'Top Characters', visible: true, order: 3, config: {} },
   { id: 'past_events', type: 'past_events', label: 'Past Events', visible: true, order: 4, config: {} },
-  { id: 'cta', type: 'cta', label: 'CTA Band', visible: true, order: 5, config: {} },
+  { id: 'about', type: 'about', label: 'About FUSE Story', visible: true, order: 5, config: {} },
+  { id: 'contact', type: 'contact', label: 'Contact & Support', visible: true, order: 6, config: {} },
+  { id: 'cta', type: 'cta', label: 'CTA Band', visible: true, order: 7, config: {} },
 ];
 
 /**
