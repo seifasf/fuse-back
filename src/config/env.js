@@ -13,6 +13,32 @@ function requiredInProd(name, value, { rejectDefaults = [] } = {}) {
   return value;
 }
 
+/** Trim + strip accidental wrapping quotes from dashboard-pasted env values. */
+function cleanEnv(value) {
+  if (value == null) return value;
+  let v = String(value).trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
+function cleanUrl(value) {
+  const v = cleanEnv(value);
+  if (!v) return v;
+  return v.replace(/\/+$/, '');
+}
+
+const adminSecurityKey =
+  cleanEnv(
+    requiredInProd('ADMIN_SECURITY_KEY', process.env.ADMIN_SECURITY_KEY, {
+      rejectDefaults: ['fuse2026', 'change-me-admin-key'],
+    }) || 'fuse2026'
+  ) || 'fuse2026';
+
 export const env = {
   port: Number(process.env.PORT) || 5000,
   nodeEnv,
@@ -23,12 +49,12 @@ export const env = {
     rejectDefaults: ['dev-secret-change-me', 'change-me-in-production'],
   }) || 'dev-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  adminSecurityKey: requiredInProd('ADMIN_SECURITY_KEY', process.env.ADMIN_SECURITY_KEY, {
-    rejectDefaults: ['fuse2026', 'change-me-admin-key'],
-  }) || 'fuse2026',
-  clientUrl: requiredInProd('CLIENT_URL', process.env.CLIENT_URL, {
-    rejectDefaults: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-  }) || 'http://localhost:5173',
+  adminSecurityKey,
+  clientUrl: cleanUrl(
+    requiredInProd('CLIENT_URL', process.env.CLIENT_URL, {
+      rejectDefaults: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    }) || 'http://localhost:5173'
+  ),
   qrSecret: requiredInProd('QR_SECRET', process.env.QR_SECRET, {
     rejectDefaults: ['dev-qr-secret', 'change-me-qr-secret'],
   }) || 'dev-qr-secret',
@@ -50,9 +76,15 @@ export const env = {
   myfatoorah: {
     apiKey: process.env.MYFATOORAH_API_KEY,
   },
-  /** Public base URL of this API (for uploaded image URLs). e.g. http://localhost:5001 */
-  apiPublicUrl: process.env.API_PUBLIC_URL || '',
+  /** Public base URL of this API (for uploaded image URLs). */
+  apiPublicUrl: cleanUrl(process.env.API_PUBLIC_URL || ''),
 };
+
+if (isProd) {
+  console.log(
+    `[fuse] ADMIN_SECURITY_KEY loaded (length=${env.adminSecurityKey.length}). CLIENT_URL=${env.clientUrl}`
+  );
+}
 
 if (isProd && !env.apiPublicUrl) {
   console.warn(

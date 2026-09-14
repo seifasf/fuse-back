@@ -1,9 +1,20 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { User } from '../models/User.js';
 import { signToken } from '../middleware/auth.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
+
+function adminKeyMatches(provided) {
+  const expected = String(env.adminSecurityKey || '');
+  const got = typeof provided === 'string' ? provided.trim() : '';
+  if (!got || !expected) return false;
+  const a = Buffer.from(got, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 // Cross-site (Vercel front ↔ Render API) needs SameSite=None + Secure.
 const cookieOptions = {
@@ -100,12 +111,11 @@ export const login = asyncHandler(async (req, res) => {
 
   // Admin access validation: Require the Admin Security Key for any admin account
   if (user.role === 'admin') {
-    const providedKey = typeof rawAdminKey === 'string' ? rawAdminKey.trim() : '';
-    if (!providedKey || providedKey !== env.adminSecurityKey) {
+    if (!adminKeyMatches(rawAdminKey)) {
       user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
       await user.save({ validateBeforeSave: false });
       throw new AppError(
-        'Admin Security Key is missing or invalid. Security clearance required to open admin panel.',
+        'Admin Security Key is missing or invalid. Use the exact ADMIN_SECURITY_KEY set on the server (Render env). Note: fuse2026 is only for local development.',
         403,
         'ADMIN_KEY_REQUIRED'
       );
@@ -138,8 +148,7 @@ export const verifyAdminKey = asyncHandler(async (req, res) => {
     throw new AppError('Security key must be a valid string', 400, 'VALIDATION_ERROR');
   }
 
-  const cleanKey = rawKey.trim();
-  if (!cleanKey || cleanKey !== env.adminSecurityKey) {
+  if (!adminKeyMatches(rawKey)) {
     // Artificial small delay to slow down brute force attempts
     await new Promise((r) => setTimeout(r, 400));
     throw new AppError('Invalid Admin Security Key', 403, 'INVALID_SECURITY_KEY');

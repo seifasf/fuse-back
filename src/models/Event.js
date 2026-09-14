@@ -18,6 +18,8 @@ const eventSchema = new mongoose.Schema(
       maxlength: 220,
     },
     description: { type: String, default: '', maxlength: 10000 },
+    /** Optional event-specific terms. Empty = use site default terms. */
+    termsAndConditions: { type: String, default: '', maxlength: 20000 },
     country: { type: String, enum: COUNTRIES, required: true },
     city: { type: String, trim: true, default: '', maxlength: 100 },
     venue: { type: String, required: true, trim: true, maxlength: 200 },

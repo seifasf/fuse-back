@@ -12,9 +12,16 @@ import { env } from '../config/env.js';
 import QRCode from 'qrcode';
 
 export const createBooking = asyncHandler(async (req, res) => {
-  const { eventId, items, guest, provider } = req.body;
+  const { eventId, items, guest, provider, acceptedTerms } = req.body;
   if (!eventId || !items?.length || !guest?.name || !guest?.email || !guest?.phone) {
     throw new AppError('Missing booking fields', 400, 'VALIDATION_ERROR');
+  }
+  if (acceptedTerms !== true) {
+    throw new AppError(
+      'You must accept the Terms & Conditions before purchasing tickets',
+      400,
+      'TERMS_REQUIRED'
+    );
   }
 
   const event = await Event.findOne({ _id: eventId, deletedAt: null });

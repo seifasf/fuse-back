@@ -5,6 +5,7 @@ import { Character } from '../models/Character.js';
 import { Ticket } from '../models/Ticket.js';
 import { User } from '../models/User.js';
 import { SiteContent } from '../models/SiteContent.js';
+import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { slugify } from '../utils/slugify.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -247,8 +248,15 @@ export const adminDeleteAgent = asyncHandler(async (req, res) => {
 /* ??? Site Content ?????????????????????????????????????????? */
 
 export const adminGetContent = asyncHandler(async (req, res) => {
-  const content = await SiteContent.findOne({ key: 'home' });
-  res.json({ content });
+  let content = await SiteContent.findOne({ key: 'home' });
+  if (content && !content.termsAndConditions?.trim()) {
+    content.termsAndConditions = DEFAULT_TERMS_AND_CONDITIONS;
+  }
+  res.json({
+    content: content
+      ? content
+      : { key: 'home', termsAndConditions: DEFAULT_TERMS_AND_CONDITIONS },
+  });
 });
 
 export const adminUpdateContent = asyncHandler(async (req, res) => {

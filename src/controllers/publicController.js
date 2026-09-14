@@ -3,8 +3,17 @@ import { TicketTier } from '../models/TicketTier.js';
 import { Character } from '../models/Character.js';
 import { SiteContent } from '../models/SiteContent.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 
 const notDeleted = { deletedAt: null };
+
+async function resolveTerms(eventTerms) {
+  const custom = typeof eventTerms === 'string' ? eventTerms.trim() : '';
+  if (custom) return custom;
+  const content = await SiteContent.findOne({ key: 'home' }).select('termsAndConditions').lean();
+  const siteTerms = content?.termsAndConditions?.trim();
+  return siteTerms || DEFAULT_TERMS_AND_CONDITIONS;
+}
 
 export const listEvents = asyncHandler(async (req, res) => {
   const { country, status, featured, category, limit = 20, page = 1 } = req.query;
@@ -37,8 +46,9 @@ export const getEvent = asyncHandler(async (req, res) => {
   const characters = event.characterIds?.length
     ? await Character.find({ _id: { $in: event.characterIds }, ...notDeleted }).lean()
     : [];
+  const terms = await resolveTerms(event.termsAndConditions);
 
-  res.json({ event, tiers, characters });
+  res.json({ event, tiers, characters, terms });
 });
 
 export const listCharacters = asyncHandler(async (req, res) => {
@@ -85,7 +95,17 @@ export const getHomeContent = asyncHandler(async (req, res) => {
   ]);
 
   res.json({
-    content: content || { stats: { eventsThrown: 0, countries: 2, guestsHosted: 0 }, sections: [] },
+    content: content
+      ? {
+          ...content,
+          termsAndConditions:
+            content.termsAndConditions?.trim() || DEFAULT_TERMS_AND_CONDITIONS,
+        }
+      : {
+          stats: { eventsThrown: 0, countries: 2, guestsHosted: 0 },
+          sections: [],
+          termsAndConditions: DEFAULT_TERMS_AND_CONDITIONS,
+        },
     featuredEvent,
     upcomingEvents,
     characters,

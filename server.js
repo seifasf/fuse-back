@@ -43,6 +43,11 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+      // Tolerate trailing slash mismatches on CLIENT_URL
+      const normalized = origin.replace(/\/+$/, '');
+      if (allowedOrigins.some((o) => o.replace(/\/+$/, '') === normalized)) {
+        return callback(null, true);
+      }
       // Allow Vercel preview deployments when CLIENT_URL is a production Vercel host
       if (
         origin.endsWith('.vercel.app') &&
@@ -75,6 +80,8 @@ app.use('/api/', limiter);
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 app.use('/api/v1/auth', authRoutes);
+// Compatibility for clients whose VITE_API_URL omitted /api/v1
+app.use('/auth', authRoutes);
 app.use('/api/v1', publicRoutes);
 app.use('/api/v1/bookings', bookingRoutes);
 app.use('/api/v1/payments', paymentRoutes);

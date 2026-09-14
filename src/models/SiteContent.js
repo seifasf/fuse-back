@@ -35,6 +35,7 @@ const siteContentSchema = new mongoose.Schema(
       validate: [(arr) => arr.length <= 10, 'Max 10 banners'],
     },
     about: { type: String, default: '', maxlength: 10000 },
+    termsAndConditions: { type: String, default: '', maxlength: 20000 },
     contact: {
       email: { type: String, default: '' },
       phone: { type: String, default: '' },

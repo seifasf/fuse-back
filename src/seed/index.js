@@ -11,6 +11,7 @@ import { Booking } from '../models/Booking.js';
 import { Ticket } from '../models/Ticket.js';
 import { ScanLog } from '../models/ScanLog.js';
 import { Media } from '../models/Media.js';
+import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 
 dotenv.config();
 
@@ -78,6 +79,7 @@ async function seed() {
     key: 'home',
     about:
       'FUSE is a Kuwait events company that opened in Egypt — curating unforgettable nights with world-class production, bold lineups, and a community that shows up for the music.',
+    termsAndConditions: DEFAULT_TERMS_AND_CONDITIONS,
     contact: {
       email: 'fuse.contact@fuseevents.net',
       phone: '+965 512 51241',
