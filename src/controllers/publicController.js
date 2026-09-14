@@ -69,13 +69,19 @@ export const getHomeContent = asyncHandler(async (req, res) => {
   const content = await SiteContent.findOne({ key: 'home' }).lean();
 
   const eventFilter = { status: 'upcoming', ...notDeleted };
-  if (country) eventFilter.country = country;
+  const pastFilter = { status: 'past', ...notDeleted };
+  const characterFilter = { ...notDeleted };
+  if (country) {
+    eventFilter.country = country;
+    pastFilter.country = country;
+    characterFilter.$or = [{ country }, { country: { $exists: false } }, { country: null }];
+  }
 
   const [featuredEvent, upcomingEvents, characters, pastEvents] = await Promise.all([
     Event.findOne({ ...eventFilter, featured: true }).sort({ startsAt: 1 }).lean(),
     Event.find(eventFilter).sort({ startsAt: 1 }).limit(16).lean(),
-    Character.find({ ...notDeleted }).sort({ sortOrder: 1 }).limit(20).lean(),
-    Event.find({ status: 'past', ...notDeleted }).sort({ startsAt: -1 }).limit(12).lean(),
+    Character.find(characterFilter).sort({ sortOrder: 1 }).limit(20).lean(),
+    Event.find(pastFilter).sort({ startsAt: -1 }).limit(12).lean(),
   ]);
 
   res.json({
