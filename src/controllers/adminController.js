@@ -231,7 +231,7 @@ export const adminCreateAgent = asyncHandler(async (req, res) => {
   if (!name || !email || !password) {
     throw new AppError('Name, email, and password required', 400, 'VALIDATION_ERROR');
   }
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(password, 8);
   const agent = await User.create({
     name,
     email,

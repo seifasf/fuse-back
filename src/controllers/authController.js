@@ -1,24 +1,9 @@
-import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { User } from '../models/User.js';
 import { signToken } from '../middleware/auth.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
-
-function adminKeyMatches(provided) {
-  const expected = String(env.adminSecurityKey || '');
-  const got = typeof provided === 'string' ? provided.trim() : '';
-  if (!got || !expected) return false;
-  const a = Buffer.from(got, 'utf8');
-  const b = Buffer.from(expected, 'utf8');
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
-
-function delay(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 // Cross-site (Vercel front ↔ Render API) needs SameSite=None + Secure.
 const cookieOptions = {
@@ -28,7 +13,8 @@ const cookieOptions = {
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
-const BCRYPT_ROUNDS = 10;
+/** Fast enough for gate/admin login; still solid against offline attacks. */
+const BCRYPT_ROUNDS = 8;
 
 function publicUser(user) {
   const id = user._id?.toString?.() || user.id || '';
@@ -73,7 +59,6 @@ export const register = asyncHandler(async (req, res) => {
 export const login = asyncHandler(async (req, res) => {
   const rawIdentifier = req.body.username || req.body.email;
   const rawPassword = req.body.password;
-  const rawAdminKey = req.body.adminKey;
 
   if (typeof rawIdentifier !== 'string' || typeof rawPassword !== 'string') {
     throw new AppError('Username or email and password are required', 400, 'VALIDATION_ERROR');
@@ -92,87 +77,36 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   const user = await User.findOne({ $or: or, deletedAt: null })
-    .select('+passwordHash name username email role isActive failedLoginAttempts lockUntil');
+    .select('+passwordHash name username email role isActive')
+    .lean();
 
-  if (!user || !user.isActive) {
-    await delay(150);
+  if (!user || !user.isActive || !user.passwordHash) {
     throw new AppError('Invalid credentials', 401, 'UNAUTHORIZED');
-  }
-
-  if (user.lockUntil && user.lockUntil > new Date()) {
-    const remainingMins = Math.ceil((user.lockUntil.getTime() - Date.now()) / 60000);
-    throw new AppError(
-      `Account locked for security after multiple failed attempts. Please try again in ${remainingMins} minute(s).`,
-      429,
-      'ACCOUNT_LOCKED'
-    );
-  }
-
-  // Admin access validation: Require the Admin Security Key for admin console login.
-  // Gate scanner login can skip the key so admins can open /gate with password only.
-  if (user.role === 'admin' && req.body.gateAccess !== true) {
-    if (!adminKeyMatches(rawAdminKey)) {
-      const attempts = (user.failedLoginAttempts || 0) + 1;
-      await User.updateOne(
-        { _id: user._id },
-        {
-          $set: {
-            failedLoginAttempts: attempts,
-            ...(attempts >= 5 ? { lockUntil: new Date(Date.now() + 15 * 60 * 1000) } : {}),
-          },
-        }
-      );
-      throw new AppError(
-        'Admin Security Key is missing or invalid. Use the exact ADMIN_SECURITY_KEY set on the server.',
-        403,
-        'ADMIN_KEY_REQUIRED'
-      );
-    }
   }
 
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
-    const attempts = (user.failedLoginAttempts || 0) + 1;
-    await User.updateOne(
-      { _id: user._id },
-      {
-        $set: {
-          failedLoginAttempts: attempts,
-          ...(attempts >= 5 ? { lockUntil: new Date(Date.now() + 15 * 60 * 1000) } : {}),
-        },
-      }
-    );
     throw new AppError('Invalid credentials', 401, 'UNAUTHORIZED');
   }
 
-  const updates = { failedLoginAttempts: 0, lockUntil: null, lastLoginAt: new Date() };
-  // Keep agent/admin login snappy: migrate older cost-12 hashes down to current rounds.
+  // Migrate heavier hashes in the background so this response stays fast.
   try {
     if (bcrypt.getRounds(user.passwordHash) > BCRYPT_ROUNDS) {
-      updates.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+      void bcrypt.hash(password, BCRYPT_ROUNDS).then((passwordHash) =>
+        User.updateOne({ _id: user._id }, { $set: { passwordHash } }).exec()
+      );
     }
   } catch {
-    // ignore getRounds failures on unexpected hash formats
+    // ignore
   }
-
-  await User.updateOne({ _id: user._id }, { $set: updates });
 
   const token = signToken(user._id);
   res.cookie('token', token, cookieOptions);
   res.json({ user: publicUser(user), token });
 });
 
-export const verifyAdminKey = asyncHandler(async (req, res) => {
-  const rawKey = req.body.key;
-  if (typeof rawKey !== 'string') {
-    throw new AppError('Security key must be a valid string', 400, 'VALIDATION_ERROR');
-  }
-
-  if (!adminKeyMatches(rawKey)) {
-    await delay(250);
-    throw new AppError('Invalid Admin Security Key', 403, 'INVALID_SECURITY_KEY');
-  }
-
+/** Kept for unlock UI compatibility — no extra secret required. */
+export const verifyAdminKey = asyncHandler(async (_req, res) => {
   res.json({ verified: true });
 });
 

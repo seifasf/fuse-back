@@ -77,7 +77,19 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+const healthPayload = () => ({
+  status: 'ok',
+  service: 'fuse-api',
+  timestamp: new Date().toISOString(),
+});
+
+// Render / uptime probes hit `/` — keep these outside the API prefix
+app.get('/', (_req, res) => res.status(200).json(healthPayload()));
+app.head('/', (_req, res) => res.status(200).end());
+app.get('/health', (_req, res) => res.status(200).json(healthPayload()));
+app.head('/health', (_req, res) => res.status(200).end());
+app.get('/api/health', (_req, res) => res.status(200).json(healthPayload()));
+app.head('/api/health', (_req, res) => res.status(200).end());
 
 app.use('/api/v1/auth', authRoutes);
 // Compatibility for clients whose VITE_API_URL omitted /api/v1
