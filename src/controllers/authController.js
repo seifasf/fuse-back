@@ -104,8 +104,9 @@ export const login = asyncHandler(async (req, res) => {
     );
   }
 
-  // Fail fast on wrong admin key before expensive bcrypt when key is supplied
-  if (user.role === 'admin') {
+  // Admin access validation: Require the Admin Security Key for admin console login.
+  // Gate scanner login can skip the key so admins can open /gate with password only.
+  if (user.role === 'admin' && req.body.gateAccess !== true) {
     if (!adminKeyMatches(rawAdminKey)) {
       const attempts = (user.failedLoginAttempts || 0) + 1;
       await User.updateOne(
