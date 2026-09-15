@@ -28,11 +28,14 @@ const cookieOptions = {
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
+const BCRYPT_ROUNDS = 10;
+
 function publicUser(user) {
+  const id = user._id?.toString?.() || user.id || '';
   return {
-    id: user._id.toString(),
+    id,
     name: user.name,
-    username: user.username,
+    username: user.username || undefined,
     email: user.email,
     role: user.role,
   };
@@ -53,7 +56,7 @@ export const register = asyncHandler(async (req, res) => {
   const exists = await User.findOne({ email: cleanEmail }).select('_id').lean();
   if (exists) throw new AppError('Email already registered', 409, 'CONFLICT');
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const user = await User.create({
     name: cleanName,
     email: cleanEmail,
@@ -88,7 +91,8 @@ export const login = asyncHandler(async (req, res) => {
     or.push({ email: `${identifier}@fuse.events` });
   }
 
-  const user = await User.findOne({ $or: or, deletedAt: null }).select('+passwordHash');
+  const user = await User.findOne({ $or: or, deletedAt: null })
+    .select('+passwordHash name username email role isActive failedLoginAttempts lockUntil');
 
   if (!user || !user.isActive) {
     await delay(150);
@@ -141,10 +145,17 @@ export const login = asyncHandler(async (req, res) => {
     throw new AppError('Invalid credentials', 401, 'UNAUTHORIZED');
   }
 
-  await User.updateOne(
-    { _id: user._id },
-    { $set: { failedLoginAttempts: 0, lockUntil: null, lastLoginAt: new Date() } }
-  );
+  const updates = { failedLoginAttempts: 0, lockUntil: null, lastLoginAt: new Date() };
+  // Keep agent/admin login snappy: migrate older cost-12 hashes down to current rounds.
+  try {
+    if (bcrypt.getRounds(user.passwordHash) > BCRYPT_ROUNDS) {
+      updates.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    }
+  } catch {
+    // ignore getRounds failures on unexpected hash formats
+  }
+
+  await User.updateOne({ _id: user._id }, { $set: updates });
 
   const token = signToken(user._id);
   res.cookie('token', token, cookieOptions);

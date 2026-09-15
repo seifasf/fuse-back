@@ -46,9 +46,9 @@ async function seed() {
     Media.deleteMany({}),
   ]);
 
-  const adminHash = await bcrypt.hash('admin123', 12);
-  const seifHash = await bcrypt.hash('seif', 12);
-  const agentHash = await bcrypt.hash('agent123', 12);
+  const adminHash = await bcrypt.hash('admin123', 10);
+  const seifHash = await bcrypt.hash('seif', 10);
+  const agentHash = await bcrypt.hash('agent123', 10);
 
   await User.create({
     name: 'Admin',

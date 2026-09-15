@@ -16,8 +16,16 @@ export const auth = asyncHandler(async (req, res, next) => {
 
   if (!token) throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
 
-  const decoded = jwt.verify(token, env.jwtSecret);
-  const user = await User.findOne({ _id: decoded.sub, deletedAt: null, isActive: true });
+  let decoded;
+  try {
+    decoded = jwt.verify(token, env.jwtSecret);
+  } catch {
+    throw new AppError('Invalid or expired session', 401, 'UNAUTHORIZED');
+  }
+
+  const user = await User.findOne({ _id: decoded.sub, deletedAt: null, isActive: true })
+    .select('name username email role isActive')
+    .lean();
   if (!user) throw new AppError('User not found', 401, 'UNAUTHORIZED');
 
   req.user = user;
