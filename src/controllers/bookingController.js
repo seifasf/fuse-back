@@ -10,6 +10,7 @@ import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
 import QRCode from 'qrcode';
+import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider, acceptedTerms } = req.body;
@@ -46,6 +47,7 @@ export const createBooking = asyncHandler(async (req, res) => {
     validatedItems.push({
       tierId: tier._id,
       tierName: tier.name,
+      tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
       qty: item.qty,
       unitPrice: tier.price,
     });
@@ -98,6 +100,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         code: t.code,
         status: t.status,
         tierName: t.tierName,
+        tierColor: t.tierColor,
         eventTitle: t.eventTitle,
         holderName: t.holderName,
         qrDataUrl,
@@ -142,6 +145,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         holderEmail: booking.guest.email,
         holderPhone: booking.guest.phone,
         tierName: item.tierName,
+        tierColor: normalizeHexColor(item.tierColor || colorForTierName(item.tierName)),
         eventTitle,
       });
 

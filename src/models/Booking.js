@@ -8,6 +8,7 @@ const bookingItemSchema = new mongoose.Schema(
     tierName: { type: String, required: true },
     qty: { type: Number, required: true, min: 1, max: 50 },
     unitPrice: { type: Number, required: true, min: 0 },
+    tierColor: { type: String, default: '#64748B', maxlength: 7 },
   },
   { _id: false }
 );

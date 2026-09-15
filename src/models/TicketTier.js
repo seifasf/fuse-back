@@ -10,6 +10,8 @@ const ticketTierSchema = new mongoose.Schema(
       index: true,
     },
     name: { type: String, required: true, trim: true, maxlength: 80 },
+    /** Hex color for UI + ticket badge (e.g. #D4AF37) */
+    color: { type: String, default: '#64748B', trim: true, maxlength: 7 },
     description: { type: String, default: '', maxlength: 500 },
     price: { type: Number, required: true, min: 0 },
     currency: { type: String, enum: CURRENCIES, required: true },

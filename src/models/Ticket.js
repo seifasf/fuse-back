@@ -38,6 +38,7 @@ const ticketSchema = new mongoose.Schema(
     holderEmail: { type: String, lowercase: true, trim: true, default: '' },
     holderPhone: { type: String, trim: true, default: '' },
     tierName: { type: String, required: true },
+    tierColor: { type: String, default: '#64748B', maxlength: 7 },
     eventTitle: { type: String, required: true },
     scannedAt: { type: Date },
     scannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

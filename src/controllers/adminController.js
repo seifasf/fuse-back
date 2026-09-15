@@ -6,6 +6,7 @@ import { Ticket } from '../models/Ticket.js';
 import { User } from '../models/User.js';
 import { SiteContent } from '../models/SiteContent.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
+import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import { slugify } from '../utils/slugify.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -59,12 +60,24 @@ export const adminListTiers = asyncHandler(async (req, res) => {
 });
 
 export const adminCreateTier = asyncHandler(async (req, res) => {
-  const tier = await TicketTier.create({ ...req.body, eventId: req.params.eventId });
+  const name = String(req.body.name || '').trim();
+  const color = normalizeHexColor(req.body.color || colorForTierName(name));
+  const tier = await TicketTier.create({
+    ...req.body,
+    name,
+    color,
+    eventId: req.params.eventId,
+  });
   res.status(201).json({ tier });
 });
 
 export const adminUpdateTier = asyncHandler(async (req, res) => {
-  const tier = await TicketTier.findByIdAndUpdate(req.params.tierId, req.body, { new: true });
+  const data = { ...req.body };
+  if (data.name) data.name = String(data.name).trim();
+  if (data.color || data.name) {
+    data.color = normalizeHexColor(data.color || colorForTierName(data.name));
+  }
+  const tier = await TicketTier.findByIdAndUpdate(req.params.tierId, data, { new: true });
   res.json({ tier });
 });
 
@@ -457,6 +470,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       {
         tierId: tier._id,
         tierName: tier.name,
+        tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
         qty: quantity,
         unitPrice: 0,
       },
@@ -484,6 +498,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       holderEmail: booking.guest.email,
       holderPhone: booking.guest.phone,
       tierName: tier.name,
+      tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
       eventTitle: event.title,
     });
 
@@ -537,6 +552,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       code: t.code,
       status: t.status,
       tierName: t.tierName,
+      tierColor: t.tierColor,
       eventTitle: t.eventTitle,
       qrDataUrl: qrDataUrls[i].qrDataUrl,
     })),
