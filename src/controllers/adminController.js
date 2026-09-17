@@ -121,6 +121,36 @@ export const adminDeleteEvent = asyncHandler(async (req, res) => {
 
 /* ??? Ticket Tiers ?????????????????????????????????????????? */
 
+/** Ensure tier quantities never exceed the event's total ticket capacity. */
+async function assertTierFitsCapacity(eventId, nextQuantity, excludeTierId = null) {
+  const event = await Event.findById(eventId).select('capacity title').lean();
+  if (!event) throw new AppError('Event not found', 404, 'NOT_FOUND');
+
+  const capacity = Math.max(0, Number(event.capacity) || 0);
+  if (capacity <= 0) {
+    throw new AppError(
+      'Set Total Venue Capacity on the event first, then divide those tickets into tiers',
+      400,
+      'CAPACITY_REQUIRED'
+    );
+  }
+
+  const filter = { eventId };
+  if (excludeTierId) filter._id = { $ne: excludeTierId };
+  const tiers = await TicketTier.find(filter).select('quantity name').lean();
+  const used = tiers.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0);
+  const qty = Math.max(0, Number(nextQuantity) || 0);
+  if (used + qty > capacity) {
+    const remaining = Math.max(0, capacity - used);
+    throw new AppError(
+      `Only ${remaining} ticket${remaining === 1 ? '' : 's'} left to assign (capacity ${capacity}, already assigned ${used})`,
+      400,
+      'CAPACITY_EXCEEDED'
+    );
+  }
+  return { capacity, used, remaining: capacity - used - qty };
+}
+
 export const adminListTiers = asyncHandler(async (req, res) => {
   const tiers = await TicketTier.find({ eventId: req.params.eventId }).lean();
   res.json({ tiers });
@@ -128,11 +158,14 @@ export const adminListTiers = asyncHandler(async (req, res) => {
 
 export const adminCreateTier = asyncHandler(async (req, res) => {
   const name = String(req.body.name || '').trim();
+  const quantity = Math.max(1, Number(req.body.quantity) || 1);
+  await assertTierFitsCapacity(req.params.eventId, quantity);
   const color = normalizeHexColor(req.body.color || colorForTierName(name));
   const tier = await TicketTier.create({
     ...req.body,
     name,
     color,
+    quantity,
     eventId: req.params.eventId,
   });
   res.status(201).json({ tier });
@@ -143,6 +176,10 @@ export const adminUpdateTier = asyncHandler(async (req, res) => {
   if (data.name) data.name = String(data.name).trim();
   if (data.color || data.name) {
     data.color = normalizeHexColor(data.color || colorForTierName(data.name));
+  }
+  if (data.quantity != null) {
+    data.quantity = Math.max(1, Number(data.quantity) || 1);
+    await assertTierFitsCapacity(req.params.eventId, data.quantity, req.params.tierId);
   }
   const tier = await TicketTier.findByIdAndUpdate(req.params.tierId, data, { new: true });
   res.json({ tier });
