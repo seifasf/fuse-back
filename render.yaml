@@ -29,7 +29,7 @@ services:
       - key: API_PUBLIC_URL
         sync: false
       - key: JWT_EXPIRES_IN
-        value: 7d
+        value: "7d"
       - key: EMAIL_FROM
         value: fuse.contact@fuseevents.net
       - key: SMTP_HOST

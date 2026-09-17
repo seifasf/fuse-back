@@ -23,23 +23,90 @@ export const adminListEvents = asyncHandler(async (req, res) => {
   res.json({ events });
 });
 
+function sanitizeEventBody(body = {}) {
+  const data = { ...body };
+  // datetime-local empty strings must not be cast as Date
+  for (const key of ['startsAt', 'endsAt']) {
+    if (data[key] === '' || data[key] === null) {
+      if (key === 'endsAt') delete data[key];
+      else data[key] = undefined;
+    }
+  }
+  if (typeof data.title === 'string') data.title = data.title.trim();
+  if (typeof data.venue === 'string') data.venue = data.venue.trim();
+  if (typeof data.city === 'string') data.city = data.city.trim();
+  if (typeof data.description === 'string') data.description = data.description.trim();
+  if (typeof data.capacity === 'string' && data.capacity !== '') {
+    data.capacity = Number(data.capacity);
+  }
+  return data;
+}
+
+async function uniqueEventSlug(title, excludeId = null) {
+  const base = slugify(title) || 'event';
+  let candidate = base;
+  let n = 2;
+  while (true) {
+    const existing = await Event.findOne({
+      slug: candidate,
+      ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+    }).select('_id');
+    if (!existing) return candidate;
+    candidate = `${base}-${n++}`;
+  }
+}
+
 export const adminCreateEvent = asyncHandler(async (req, res) => {
-  const data = { ...req.body };
-  if (!data.slug) data.slug = slugify(data.title);
+  const data = sanitizeEventBody(req.body);
+  if (!data.title) throw new AppError('Event title is required', 400, 'VALIDATION_ERROR');
+  if (!data.venue) throw new AppError('Venue is required', 400, 'VALIDATION_ERROR');
+  if (!data.startsAt) throw new AppError('Start date/time is required', 400, 'VALIDATION_ERROR');
+  if (!data.country) throw new AppError('Country is required', 400, 'VALIDATION_ERROR');
+
+  data.slug = await uniqueEventSlug(data.title);
   if (!data.coverImage && data.images?.[0]) data.coverImage = data.images[0];
   if (!data.timezone) {
     data.timezone = data.country === 'KW' ? 'Asia/Kuwait' : 'Africa/Cairo';
   }
-  const event = await Event.create(data);
-  res.status(201).json({ event });
+  data.deletedAt = null;
+
+  try {
+    const event = await Event.create(data);
+    res.status(201).json({ event });
+  } catch (err) {
+    if (err?.code === 11000) {
+      throw new AppError('An event with this name already exists', 409, 'CONFLICT');
+    }
+    if (err?.name === 'ValidationError' || err?.name === 'CastError') {
+      throw new AppError(err.message, 400, 'VALIDATION_ERROR');
+    }
+    throw err;
+  }
 });
 
 export const adminUpdateEvent = asyncHandler(async (req, res) => {
-  const data = { ...req.body };
-  if (data.title && !data.slug) data.slug = slugify(data.title);
-  const event = await Event.findByIdAndUpdate(req.params.id, data, { new: true });
-  if (!event) throw new AppError('Event not found', 404, 'NOT_FOUND');
-  res.json({ event });
+  const data = sanitizeEventBody(req.body);
+  if (data.title && !data.slug) {
+    data.slug = await uniqueEventSlug(data.title, req.params.id);
+  }
+
+  try {
+    const event = await Event.findByIdAndUpdate(req.params.id, data, {
+      new: true,
+      runValidators: true,
+    });
+    if (!event) throw new AppError('Event not found', 404, 'NOT_FOUND');
+    res.json({ event });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err?.code === 11000) {
+      throw new AppError('An event with this name already exists', 409, 'CONFLICT');
+    }
+    if (err?.name === 'ValidationError' || err?.name === 'CastError') {
+      throw new AppError(err.message, 400, 'VALIDATION_ERROR');
+    }
+    throw err;
+  }
 });
 
 export const adminDeleteEvent = asyncHandler(async (req, res) => {
@@ -273,10 +340,17 @@ export const adminGetContent = asyncHandler(async (req, res) => {
 });
 
 export const adminUpdateContent = asyncHandler(async (req, res) => {
+  const payload = { ...req.body };
+  delete payload._id;
+  delete payload.__v;
+  delete payload.createdAt;
+  delete payload.updatedAt;
+  payload.key = 'home';
+
   const content = await SiteContent.findOneAndUpdate(
     { key: 'home' },
-    { ...req.body, key: 'home' },
-    { upsert: true, new: true }
+    { $set: payload },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
   );
   res.json({ content });
 });
@@ -298,8 +372,8 @@ export const adminUpdateSections = asyncHandler(async (req, res) => {
   const { sections } = req.body;
   const content = await SiteContent.findOneAndUpdate(
     { key: 'home' },
-    { sections },
-    { upsert: true, new: true }
+    { $set: { sections, key: 'home' } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
   );
   res.json({ sections: content.sections });
 });

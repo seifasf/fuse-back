@@ -32,6 +32,36 @@ function cleanUrl(value) {
   return v.replace(/\/+$/, '');
 }
 
+/**
+ * jsonwebtoken + `ms`: a bare numeric string like "7" is NOT "7 days" —
+ * it yields a 0s lifetime (iat === exp), so every admin API 401s after login.
+ * Accept "7d" / "12h" / "3600" (seconds as number-like with unit or large secs).
+ */
+function normalizeJwtExpiresIn(raw) {
+  const fallback = '7d';
+  const v = cleanEnv(raw);
+  if (!v) return fallback;
+
+  // Pure digits: treat small values as days, large as seconds
+  if (/^\d+$/.test(v)) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return fallback;
+    if (n < 60) return `${n}d`; // "7" → "7d"
+    return n; // e.g. 604800 seconds
+  }
+
+  // Timespan strings: 7d, 12h, 30m, 60s
+  if (/^\d+(\.\d+)?\s*[smhdw]$/i.test(v)) return v.replace(/\s+/g, '');
+
+  // "7 days" style
+  if (/^\d+(\.\d+)?\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)$/i.test(v)) {
+    return v;
+  }
+
+  console.warn(`[fuse] Invalid JWT_EXPIRES_IN="${v}" — using ${fallback}`);
+  return fallback;
+}
+
 const adminSecurityKey =
   cleanEnv(
     requiredInProd('ADMIN_SECURITY_KEY', process.env.ADMIN_SECURITY_KEY, {
@@ -48,7 +78,7 @@ export const env = {
   jwtSecret: requiredInProd('JWT_SECRET', process.env.JWT_SECRET, {
     rejectDefaults: ['dev-secret-change-me', 'change-me-in-production'],
   }) || 'dev-secret-change-me',
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  jwtExpiresIn: normalizeJwtExpiresIn(process.env.JWT_EXPIRES_IN),
   adminSecurityKey,
   clientUrl: cleanUrl(
     requiredInProd('CLIENT_URL', process.env.CLIENT_URL, {

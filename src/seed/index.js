@@ -12,7 +12,6 @@ import { Ticket } from '../models/Ticket.js';
 import { ScanLog } from '../models/ScanLog.js';
 import { Media } from '../models/Media.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
-import { colorForTierName } from '../constants/ticketTiers.js';
 
 dotenv.config();
 
@@ -28,8 +27,7 @@ const DEFAULT_SECTIONS = [
 ];
 
 /**
- * Bootstrap with only the two Egypt upcoming events for ticket testing.
- * Wipes content collections, recreates staff accounts + site content + those events.
+ * Bootstrap only — staff accounts + empty site content. No demo events.
  */
 async function seed() {
   await connectDB();
@@ -95,102 +93,7 @@ async function seed() {
     banners: [],
   });
 
-  const neon = await Event.create({
-    title: 'Neon Nights Cairo',
-    slug: 'neon-nights-cairo',
-    description: 'Club night under neon lights in New Cairo.',
-    country: 'EG',
-    city: 'Cairo',
-    venue: 'The Villa, New Cairo',
-    startsAt: new Date('2026-10-18T18:00:00.000Z'),
-    endsAt: new Date('2026-10-19T02:00:00.000Z'),
-    timezone: 'Africa/Cairo',
-    category: 'club night',
-    status: 'upcoming',
-    capacity: 1800,
-    featured: true,
-    ticketsSold: 0,
-    checkInCount: 0,
-    attendanceCount: 0,
-    coverImage: '',
-    images: [],
-    gallery: [],
-  });
-
-  const sunset = await Event.create({
-    title: 'Sunset Sessions',
-    slug: 'sunset-sessions',
-    description: 'Sunset concert overlooking the Nile.',
-    country: 'EG',
-    city: 'Cairo',
-    venue: 'Nile Deck, Cairo',
-    startsAt: new Date('2026-11-09T16:00:00.000Z'),
-    endsAt: new Date('2026-11-09T23:00:00.000Z'),
-    timezone: 'Africa/Cairo',
-    category: 'concert',
-    status: 'upcoming',
-    capacity: 800,
-    featured: true,
-    ticketsSold: 0,
-    checkInCount: 0,
-    attendanceCount: 0,
-    coverImage: '',
-    images: [],
-    gallery: [],
-  });
-
-  await TicketTier.insertMany([
-    {
-      eventId: neon._id,
-      name: 'Regular',
-      color: colorForTierName('Regular'),
-      price: 500,
-      currency: 'EGP',
-      quantity: 1200,
-      sold: 0,
-      maxPerOrder: 10,
-      sortOrder: 0,
-      isActive: true,
-    },
-    {
-      eventId: neon._id,
-      name: 'VIP',
-      color: colorForTierName('VIP'),
-      price: 1200,
-      currency: 'EGP',
-      quantity: 300,
-      sold: 0,
-      maxPerOrder: 6,
-      sortOrder: 1,
-      isActive: true,
-    },
-    {
-      eventId: sunset._id,
-      name: 'Regular',
-      color: colorForTierName('Regular'),
-      price: 350,
-      currency: 'EGP',
-      quantity: 500,
-      sold: 0,
-      maxPerOrder: 10,
-      sortOrder: 0,
-      isActive: true,
-    },
-    {
-      eventId: sunset._id,
-      name: 'Gold',
-      color: colorForTierName('Gold'),
-      price: 750,
-      currency: 'EGP',
-      quantity: 150,
-      sold: 0,
-      maxPerOrder: 6,
-      sortOrder: 1,
-      isActive: true,
-    },
-  ]);
-
-  console.log('Seed complete — only Neon Nights Cairo + Sunset Sessions kept for ticket testing');
+  console.log('Seed complete — no events (create them in admin)');
   console.log('Admin: admin@fuse.events / admin123');
   console.log('Seif:  seif / seif  (gate agent)');
   console.log('Agent: agent@fuse.events / agent123');

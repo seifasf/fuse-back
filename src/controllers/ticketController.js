@@ -20,7 +20,7 @@ export const listGateEvents = asyncHandler(async (req, res) => {
   }
 
   const events = await Event.find(filter)
-    .select('title slug country city venue startsAt status coverImage')
+    .select('title slug country city venue startsAt status coverImage capacity ticketsSold checkInCount')
     .sort({ startsAt: 1 })
     .lean();
 
@@ -116,10 +116,14 @@ export const scanTicket = asyncHandler(async (req, res) => {
       status: 'already_used',
       ticket: {
         holderName: ticket.holderName,
+        holderEmail: ticket.holderEmail || '',
+        holderPhone: ticket.holderPhone || '',
         scannedAt: ticket.scannedAt,
         event: ticket.eventTitle,
         tier: ticket.tierName,
+        tierColor: ticket.tierColor || '',
         code: ticket.code,
+        scanAttempts: ticket.scanAttempts,
       },
     });
   }
@@ -159,10 +163,14 @@ export const scanTicket = asyncHandler(async (req, res) => {
     status: 'valid',
     ticket: {
       holderName: ticket.holderName,
+      holderEmail: ticket.holderEmail || '',
+      holderPhone: ticket.holderPhone || '',
       event: ticket.eventTitle,
       tier: ticket.tierName,
+      tierColor: ticket.tierColor || '',
       code: ticket.code,
       scannedAt: ticket.scannedAt,
+      scanAttempts: ticket.scanAttempts,
     },
   });
 });
