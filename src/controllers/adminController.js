@@ -568,8 +568,8 @@ export const adminListClients = asyncHandler(async (req, res) => {
 export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   const { eventId, tierId, qty = 1, guest, sendEmail = false, sendWhatsApp = false, note = '' } = req.body;
 
-  if (!eventId || !tierId || !guest?.name || !guest?.email || !guest?.phone) {
-    throw new AppError('Event, tier, and guest name/email/phone are required', 400, 'VALIDATION_ERROR');
+  if (!eventId || !tierId || !guest?.name || !guest?.email) {
+    throw new AppError('Event, tier, and guest name/email are required', 400, 'VALIDATION_ERROR');
   }
 
   const quantity = Math.min(Math.max(Number(qty) || 1, 1), 20);
@@ -583,11 +583,14 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   }
 
   const currency = event.country === 'KW' ? 'KWD' : 'EGP';
+  const guestName = String(guest.name).trim();
+  const guestEmail = String(guest.email).trim().toLowerCase();
+  const guestPhone = String(guest.phone || '').trim() || '—';
   const booking = await Booking.create({
     guest: {
-      name: String(guest.name).trim(),
-      email: String(guest.email).trim().toLowerCase(),
-      phone: String(guest.phone).trim(),
+      name: guestName,
+      email: guestEmail,
+      phone: guestPhone,
     },
     eventId,
     eventSnapshot: {

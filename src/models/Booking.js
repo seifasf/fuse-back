@@ -25,7 +25,7 @@ const bookingSchema = new mongoose.Schema(
         trim: true,
         maxlength: 254,
       },
-      phone: { type: String, required: true, trim: true, maxlength: 32 },
+      phone: { type: String, default: '', trim: true, maxlength: 32 },
     },
     eventId: {
       type: mongoose.Schema.Types.ObjectId,
