@@ -377,17 +377,28 @@ export const adminGetContent = asyncHandler(async (req, res) => {
 });
 
 export const adminUpdateContent = asyncHandler(async (req, res) => {
-  const payload = { ...req.body };
-  delete payload._id;
-  delete payload.__v;
-  delete payload.createdAt;
-  delete payload.updatedAt;
-  payload.key = 'home';
+  const body = req.body || {};
+  // Whitelist only editable fields — never let a content PUT wipe `sections`
+  // (sections are managed by /admin/sections) or clobber metadata.
+  const $set = { key: 'home' };
+
+  if (typeof body.about === 'string') $set.about = body.about;
+  if (Array.isArray(body.banners)) $set.banners = body.banners;
+  if (body.contact && typeof body.contact === 'object' && !Array.isArray(body.contact)) {
+    $set.contact = body.contact;
+  }
+  if (body.stats && typeof body.stats === 'object' && !Array.isArray(body.stats)) {
+    $set.stats = body.stats;
+  }
+  if (typeof body.termsAndConditions === 'string') {
+    // Keep existing / default terms if the editor sends a blank string
+    $set.termsAndConditions = body.termsAndConditions.trim() || DEFAULT_TERMS_AND_CONDITIONS;
+  }
 
   const content = await SiteContent.findOneAndUpdate(
     { key: 'home' },
-    { $set: payload },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { $set },
+    { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
   );
   res.json({ content });
 });
