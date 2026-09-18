@@ -10,6 +10,7 @@ import {
   adminAddBanner, adminDeleteBanner,
   adminListClients, adminIssueManualTicket,
   adminDoorEvents, adminDoorEventGuests,
+  adminListContactMessages, adminGetContactMessage, adminUpdateContactMessage, adminDeleteContactMessage,
 } from '../controllers/adminController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { uploadMiddleware, uploadImage, deleteMedia } from '../controllers/uploadController.js';
@@ -51,6 +52,12 @@ router.post('/tickets/manual', adminIssueManualTicket);
 // Door attendance
 router.get('/door/events', adminDoorEvents);
 router.get('/door/events/:eventId/guests', adminDoorEventGuests);
+
+// Contact inbox
+router.get('/contact-messages', adminListContactMessages);
+router.get('/contact-messages/:id', adminGetContactMessage);
+router.put('/contact-messages/:id', adminUpdateContactMessage);
+router.delete('/contact-messages/:id', adminDeleteContactMessage);
 
 // Agents
 router.get('/agents', adminListAgents);

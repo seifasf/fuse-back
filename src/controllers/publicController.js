@@ -2,7 +2,9 @@ import { Event } from '../models/Event.js';
 import { TicketTier } from '../models/TicketTier.js';
 import { Character } from '../models/Character.js';
 import { SiteContent } from '../models/SiteContent.js';
+import { ContactMessage } from '../models/ContactMessage.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 
 const notDeleted = { deletedAt: null };
@@ -72,6 +74,39 @@ export const getCharacter = asyncHandler(async (req, res) => {
     : [];
 
   res.json({ character, events });
+});
+
+export const submitContactMessage = asyncHandler(async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+
+  if (!name || name.length < 2) {
+    throw new AppError('Please enter your name', 400, 'VALIDATION_ERROR');
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError('Please enter a valid email', 400, 'VALIDATION_ERROR');
+  }
+  if (!message || message.length < 5) {
+    throw new AppError('Please enter a message', 400, 'VALIDATION_ERROR');
+  }
+
+  const doc = await ContactMessage.create({
+    name: name.slice(0, 120),
+    email: email.slice(0, 200),
+    phone: phone.slice(0, 40),
+    message: message.slice(0, 5000),
+    source: 'website',
+    ip: String(req.ip || req.headers['x-forwarded-for'] || '').slice(0, 80),
+    userAgent: String(req.headers['user-agent'] || '').slice(0, 400),
+  });
+
+  res.status(201).json({
+    ok: true,
+    id: doc._id,
+    message: 'Message received — we will get back to you soon.',
+  });
 });
 
 export const getHomeContent = asyncHandler(async (req, res) => {

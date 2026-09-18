@@ -5,6 +5,7 @@ import { Character } from '../models/Character.js';
 import { Ticket } from '../models/Ticket.js';
 import { User } from '../models/User.js';
 import { SiteContent } from '../models/SiteContent.js';
+import { ContactMessage } from '../models/ContactMessage.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import { slugify } from '../utils/slugify.js';
@@ -385,10 +386,17 @@ export const adminUpdateContent = asyncHandler(async (req, res) => {
   if (typeof body.about === 'string') $set.about = body.about;
   if (Array.isArray(body.banners)) $set.banners = body.banners;
   if (body.contact && typeof body.contact === 'object' && !Array.isArray(body.contact)) {
-    $set.contact = body.contact;
+    // Merge per-field so a partial contact payload cannot blank phones/socials
+    const c = body.contact;
+    for (const key of ['email', 'phone', 'phoneKW', 'phoneEG', 'instagram', 'whatsapp']) {
+      if (typeof c[key] === 'string') $set[`contact.${key}`] = c[key];
+    }
   }
   if (body.stats && typeof body.stats === 'object' && !Array.isArray(body.stats)) {
-    $set.stats = body.stats;
+    const s = body.stats;
+    if (s.eventsThrown != null) $set['stats.eventsThrown'] = Number(s.eventsThrown) || 0;
+    if (s.countries != null) $set['stats.countries'] = Number(s.countries) || 0;
+    if (s.guestsHosted != null) $set['stats.guestsHosted'] = Number(s.guestsHosted) || 0;
   }
   if (typeof body.termsAndConditions === 'string') {
     // Keep existing / default terms if the editor sends a blank string
@@ -768,6 +776,68 @@ export const adminDoorEventGuests = asyncHandler(async (req, res) => {
       createdAt: g.createdAt,
     })),
   });
+});
+
+/* ??? Contact messages ????????????????????????????????????? */
+
+export const adminListContactMessages = asyncHandler(async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 30));
+  const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+
+  const filter = {};
+  if (status && ['new', 'read', 'archived'].includes(status)) {
+    filter.status = status;
+  }
+  if (search) {
+    const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [{ name: re }, { email: re }, { phone: re }, { message: re }];
+  }
+
+  const skip = (page - 1) * limit;
+  const [messages, total, newCount] = await Promise.all([
+    ContactMessage.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    ContactMessage.countDocuments(filter),
+    ContactMessage.countDocuments({ status: 'new' }),
+  ]);
+
+  res.json({ messages, total, page, limit, newCount });
+});
+
+export const adminGetContactMessage = asyncHandler(async (req, res) => {
+  const msg = await ContactMessage.findById(req.params.id);
+  if (!msg) throw new AppError('Message not found', 404, 'NOT_FOUND');
+
+  if (msg.status === 'new') {
+    msg.status = 'read';
+    msg.readAt = new Date();
+    await msg.save();
+  }
+
+  res.json({ message: msg });
+});
+
+export const adminUpdateContactMessage = asyncHandler(async (req, res) => {
+  const nextStatus = typeof req.body?.status === 'string' ? req.body.status.trim() : '';
+  if (!['new', 'read', 'archived'].includes(nextStatus)) {
+    throw new AppError('Invalid status', 400, 'VALIDATION_ERROR');
+  }
+
+  const msg = await ContactMessage.findById(req.params.id);
+  if (!msg) throw new AppError('Message not found', 404, 'NOT_FOUND');
+
+  msg.status = nextStatus;
+  msg.readAt = nextStatus === 'new' ? null : msg.readAt || new Date();
+  await msg.save();
+
+  res.json({ message: msg });
+});
+
+export const adminDeleteContactMessage = asyncHandler(async (req, res) => {
+  const msg = await ContactMessage.findByIdAndDelete(req.params.id);
+  if (!msg) throw new AppError('Message not found', 404, 'NOT_FOUND');
+  res.json({ deleted: true });
 });
 
 /* ??? Defaults ?????????????????????????????????????????????? */
