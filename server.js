@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { connectDB } from './src/config/db.js';
@@ -19,6 +20,8 @@ const app = express();
 
 // Render terminates TLS and forwards via proxy — required for rate limits + secure cookies
 app.set('trust proxy', 1);
+
+app.use(compression());
 
 // Security HTTP Headers
 app.use(

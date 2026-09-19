@@ -96,6 +96,10 @@ function sanitizeEventBody(body = {}) {
   if (typeof data.title === 'string') data.title = data.title.trim();
   if (typeof data.venue === 'string') data.venue = data.venue.trim();
   if (typeof data.city === 'string') data.city = data.city.trim();
+  if (typeof data.address === 'string') data.address = data.address.trim();
+  if (typeof data.mapsUrl === 'string') {
+    data.mapsUrl = data.mapsUrl.trim().slice(0, 1000);
+  }
   if (typeof data.description === 'string') data.description = data.description.trim();
   if (typeof data.category === 'string') data.category = normalizeCategory(data.category) || 'club night';
   if (Array.isArray(data.characterIds)) {

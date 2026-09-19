@@ -23,6 +23,8 @@ const eventSchema = new mongoose.Schema(
     city: { type: String, trim: true, default: '', maxlength: 100 },
     venue: { type: String, required: true, trim: true, maxlength: 200 },
     address: { type: String, trim: true, default: '', maxlength: 300 },
+    /** Optional Google Maps share / place link shown on the event page. */
+    mapsUrl: { type: String, trim: true, default: '', maxlength: 1000 },
     startsAt: { type: Date, required: true },
     endsAt: { type: Date },
     timezone: { type: String, default: 'Africa/Cairo' },

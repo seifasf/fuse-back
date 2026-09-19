@@ -17,6 +17,10 @@ async function resolveTerms(eventTerms) {
   return siteTerms || DEFAULT_TERMS_AND_CONDITIONS;
 }
 
+const EVENT_CARD_FIELDS =
+  'title slug country city venue startsAt endsAt category coverImage images status featured capacity gallery';
+const CHARACTER_CARD_FIELDS = 'name slug image tags country featured sortOrder';
+
 export const listEvents = asyncHandler(async (req, res) => {
   const { country, status, featured, category, limit = 20, page = 1 } = req.query;
   const filter = { ...notDeleted };
@@ -27,10 +31,16 @@ export const listEvents = asyncHandler(async (req, res) => {
 
   const skip = (Number(page) - 1) * Number(limit);
   const [events, total] = await Promise.all([
-    Event.find(filter).sort({ startsAt: 1 }).skip(skip).limit(Number(limit)).lean(),
+    Event.find(filter)
+      .select(EVENT_CARD_FIELDS)
+      .sort({ startsAt: 1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .lean(),
     Event.countDocuments(filter),
   ]);
 
+  res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   res.json({ events, total, page: Number(page), limit: Number(limit) });
 });
 
@@ -42,13 +52,18 @@ export const getEvent = asyncHandler(async (req, res) => {
     : await Event.findOne({ slug, ...notDeleted }).lean();
   if (!event) return res.status(404).json({ code: 'NOT_FOUND', message: 'Event not found' });
 
-  const tiers = await TicketTier.find({ eventId: event._id, isActive: true })
-    .sort({ sortOrder: 1, price: 1 })
-    .lean();
-  const characters = event.characterIds?.length
-    ? await Character.find({ _id: { $in: event.characterIds }, ...notDeleted }).lean()
-    : [];
-  const terms = await resolveTerms(event.termsAndConditions);
+  const [tiers, characters, terms] = await Promise.all([
+    TicketTier.find({ eventId: event._id, isActive: true })
+      .sort({ sortOrder: 1, price: 1 })
+      .select('name color price currency quantity sold maxPerOrder sortOrder eventId isActive')
+      .lean(),
+    event.characterIds?.length
+      ? Character.find({ _id: { $in: event.characterIds }, ...notDeleted })
+          .select('name slug image tags bio country featured sortOrder')
+          .lean()
+      : Promise.resolve([]),
+    resolveTerms(event.termsAndConditions),
+  ]);
 
   res.json({ event, tiers, characters, terms });
 });
@@ -59,9 +74,11 @@ export const listCharacters = asyncHandler(async (req, res) => {
   if (featured === 'true') filter.featured = true;
 
   const characters = await Character.find(filter)
+    .select(CHARACTER_CARD_FIELDS)
     .sort({ sortOrder: 1, name: 1 })
     .limit(Number(limit))
     .lean();
+  res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   res.json({ characters });
 });
 
@@ -70,7 +87,9 @@ export const getCharacter = asyncHandler(async (req, res) => {
   if (!character) return res.status(404).json({ code: 'NOT_FOUND', message: 'Character not found' });
 
   const events = character.relatedEventIds?.length
-    ? await Event.find({ _id: { $in: character.relatedEventIds }, ...notDeleted }).lean()
+    ? await Event.find({ _id: { $in: character.relatedEventIds }, ...notDeleted })
+        .select(EVENT_CARD_FIELDS)
+        .lean()
     : [];
 
   res.json({ character, events });
@@ -111,7 +130,6 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
 
 export const getHomeContent = asyncHandler(async (req, res) => {
   const { country } = req.query;
-  const content = await SiteContent.findOne({ key: 'home' }).lean();
 
   const eventFilter = { status: 'upcoming', ...notDeleted };
   const pastFilter = { status: 'past', ...notDeleted };
@@ -122,13 +140,24 @@ export const getHomeContent = asyncHandler(async (req, res) => {
     characterFilter.$or = [{ country }, { country: { $exists: false } }, { country: null }];
   }
 
-  const [featuredEvent, upcomingEvents, characters, pastEvents] = await Promise.all([
-    Event.findOne({ ...eventFilter, featured: true }).sort({ startsAt: 1 }).lean(),
-    Event.find(eventFilter).sort({ startsAt: 1 }).limit(16).lean(),
-    Character.find(characterFilter).sort({ sortOrder: 1 }).limit(20).lean(),
-    Event.find(pastFilter).sort({ startsAt: -1 }).limit(12).lean(),
+  const [content, featuredEvent, upcomingEvents, characters, pastEvents] = await Promise.all([
+    SiteContent.findOne({ key: 'home' })
+      .select('key about contact stats banners sections termsAndConditions')
+      .lean(),
+    Event.findOne({ ...eventFilter, featured: true })
+      .select(EVENT_CARD_FIELDS)
+      .sort({ startsAt: 1 })
+      .lean(),
+    Event.find(eventFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: 1 }).limit(16).lean(),
+    Character.find(characterFilter)
+      .select(CHARACTER_CARD_FIELDS)
+      .sort({ sortOrder: 1 })
+      .limit(20)
+      .lean(),
+    Event.find(pastFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: -1 }).limit(12).lean(),
   ]);
 
+  res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
   res.json({
     content: content
       ? {
