@@ -91,6 +91,16 @@ async function seed() {
     stats: { eventsThrown: 0, countries: 2, guestsHosted: 0 },
     sections: DEFAULT_SECTIONS,
     banners: [],
+    eventCategories: [
+      'club night',
+      'festival',
+      'concert',
+      'pop-up',
+      'pool party',
+      'rooftop',
+      'private',
+      'other',
+    ],
   });
 
   console.log('Seed complete — no events (create them in admin)');

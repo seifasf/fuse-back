@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import {
   COUNTRIES,
   EVENT_STATUSES,
-  EVENT_CATEGORIES,
   currencyForCountry,
 } from './constants.js';
 
@@ -29,7 +28,9 @@ const eventSchema = new mongoose.Schema(
     timezone: { type: String, default: 'Africa/Cairo' },
     category: {
       type: String,
-      enum: EVENT_CATEGORIES,
+      trim: true,
+      lowercase: true,
+      maxlength: 60,
       default: 'club night',
     },
     /** Cover / hero image (first display). `images` holds the rest of the gallery for the event page. */

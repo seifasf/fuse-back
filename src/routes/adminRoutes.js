@@ -11,6 +11,7 @@ import {
   adminListClients, adminIssueManualTicket,
   adminDoorEvents, adminDoorEventGuests,
   adminListContactMessages, adminGetContactMessage, adminUpdateContactMessage, adminDeleteContactMessage,
+  adminListEventCategories, adminUpdateEventCategories,
 } from '../controllers/adminController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { uploadMiddleware, uploadImage, deleteMedia } from '../controllers/uploadController.js';
@@ -27,6 +28,8 @@ router.get('/events', adminListEvents);
 router.post('/events', adminCreateEvent);
 router.put('/events/:id', adminUpdateEvent);
 router.delete('/events/:id', adminDeleteEvent);
+router.get('/event-categories', adminListEventCategories);
+router.put('/event-categories', adminUpdateEventCategories);
 
 // Tiers
 router.get('/events/:eventId/tiers', adminListTiers);

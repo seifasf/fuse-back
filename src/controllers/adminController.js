@@ -8,6 +8,7 @@ import { SiteContent } from '../models/SiteContent.js';
 import { ContactMessage } from '../models/ContactMessage.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
+import { EVENT_CATEGORIES } from '../models/constants.js';
 import { slugify } from '../utils/slugify.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -18,6 +19,65 @@ import { sendTicketEmail } from '../services/email.js';
 import { sendTicketWhatsApp } from '../services/whatsapp.js';
 
 /* ??? Events ??????????????????????????????????????????????? */
+
+function normalizeCategory(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
+}
+
+async function ensureEventCategoriesDoc() {
+  let content = await SiteContent.findOne({ key: 'home' });
+  if (!content) {
+    content = await SiteContent.create({
+      key: 'home',
+      eventCategories: [...EVENT_CATEGORIES],
+    });
+  } else if (!Array.isArray(content.eventCategories) || content.eventCategories.length === 0) {
+    content.eventCategories = [...EVENT_CATEGORIES];
+    await content.save();
+  }
+  return content;
+}
+
+async function rememberCategory(category) {
+  const cat = normalizeCategory(category);
+  if (!cat) return;
+  const content = await ensureEventCategoriesDoc();
+  const existing = (content.eventCategories || []).map(normalizeCategory).filter(Boolean);
+  if (!existing.includes(cat)) {
+    content.eventCategories = [...existing, cat].slice(0, 40);
+    await content.save();
+  }
+}
+
+export const adminListEventCategories = asyncHandler(async (_req, res) => {
+  const content = await ensureEventCategoriesDoc();
+  const categories = [
+    ...new Set((content.eventCategories || []).map(normalizeCategory).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b));
+  res.json({ categories });
+});
+
+export const adminUpdateEventCategories = asyncHandler(async (req, res) => {
+  const incoming = Array.isArray(req.body?.categories) ? req.body.categories : null;
+  if (!incoming) throw new AppError('categories array is required', 400, 'VALIDATION_ERROR');
+
+  const categories = [
+    ...new Set(incoming.map(normalizeCategory).filter(Boolean)),
+  ].slice(0, 40);
+
+  if (categories.length === 0) {
+    throw new AppError('Keep at least one category', 400, 'VALIDATION_ERROR');
+  }
+
+  const content = await SiteContent.findOneAndUpdate(
+    { key: 'home' },
+    { $set: { eventCategories: categories, key: 'home' } },
+    { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
+  );
+
+  res.json({ categories: content.eventCategories });
+});
 
 export const adminListEvents = asyncHandler(async (req, res) => {
   const events = await Event.find({ deletedAt: null }).sort({ startsAt: -1 }).lean();
@@ -37,10 +97,28 @@ function sanitizeEventBody(body = {}) {
   if (typeof data.venue === 'string') data.venue = data.venue.trim();
   if (typeof data.city === 'string') data.city = data.city.trim();
   if (typeof data.description === 'string') data.description = data.description.trim();
+  if (typeof data.category === 'string') data.category = normalizeCategory(data.category) || 'club night';
+  if (Array.isArray(data.characterIds)) {
+    data.characterIds = data.characterIds.map(String).filter(Boolean).slice(0, 40);
+  }
   if (typeof data.capacity === 'string' && data.capacity !== '') {
     data.capacity = Number(data.capacity);
   }
   return data;
+}
+
+async function syncEventCharacters(eventId, characterIds = []) {
+  const ids = (characterIds || []).map(String).filter(Boolean);
+  if (ids.length) {
+    await Character.updateMany(
+      { _id: { $in: ids } },
+      { $addToSet: { relatedEventIds: eventId } }
+    );
+  }
+  await Character.updateMany(
+    { relatedEventIds: eventId, ...(ids.length ? { _id: { $nin: ids } } : {}) },
+    { $pull: { relatedEventIds: eventId } }
+  );
 }
 
 async function uniqueEventSlug(title, excludeId = null) {
@@ -73,6 +151,8 @@ export const adminCreateEvent = asyncHandler(async (req, res) => {
 
   try {
     const event = await Event.create(data);
+    await rememberCategory(event.category);
+    await syncEventCharacters(event._id, event.characterIds);
     res.status(201).json({ event });
   } catch (err) {
     if (err?.code === 11000) {
@@ -97,6 +177,10 @@ export const adminUpdateEvent = asyncHandler(async (req, res) => {
       runValidators: true,
     });
     if (!event) throw new AppError('Event not found', 404, 'NOT_FOUND');
+    if (event.category) await rememberCategory(event.category);
+    if (Array.isArray(data.characterIds)) {
+      await syncEventCharacters(event._id, event.characterIds);
+    }
     res.json({ event });
   } catch (err) {
     if (err instanceof AppError) throw err;

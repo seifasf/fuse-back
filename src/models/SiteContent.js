@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { SECTION_TYPES } from './constants.js';
+import { SECTION_TYPES, EVENT_CATEGORIES } from './constants.js';
 
 const sectionSchema = new mongoose.Schema(
   {
@@ -53,6 +53,12 @@ const siteContentSchema = new mongoose.Schema(
       type: [sectionSchema],
       default: [],
       validate: [(arr) => arr.length <= 20, 'Max 20 sections'],
+    },
+    /** Editable list of event categories shown when creating/editing events. */
+    eventCategories: {
+      type: [{ type: String, trim: true, maxlength: 60 }],
+      default: () => [...EVENT_CATEGORIES],
+      validate: [(arr) => arr.length <= 40, 'Max 40 categories'],
     },
   },
   { timestamps: true }
