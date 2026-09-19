@@ -8,6 +8,7 @@ import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 
 const notDeleted = { deletedAt: null };
+const publicVisible = { ...notDeleted, visibleOnSite: { $ne: false } };
 
 async function resolveTerms(eventTerms) {
   const custom = typeof eventTerms === 'string' ? eventTerms.trim() : '';
@@ -23,7 +24,7 @@ const CHARACTER_CARD_FIELDS = 'name slug image tags country featured sortOrder';
 
 export const listEvents = asyncHandler(async (req, res) => {
   const { country, status, featured, category, limit = 20, page = 1 } = req.query;
-  const filter = { ...notDeleted };
+  const filter = { ...publicVisible };
   if (country) filter.country = country;
   if (status) filter.status = status;
   if (category) filter.category = category;
@@ -48,8 +49,8 @@ export const getEvent = asyncHandler(async (req, res) => {
   const { slug } = req.params;
   const isObjectId = /^[a-f\d]{24}$/i.test(slug);
   const event = isObjectId
-    ? await Event.findOne({ _id: slug, ...notDeleted }).lean()
-    : await Event.findOne({ slug, ...notDeleted }).lean();
+    ? await Event.findOne({ _id: slug, ...publicVisible }).lean()
+    : await Event.findOne({ slug, ...publicVisible }).lean();
   if (!event) return res.status(404).json({ code: 'NOT_FOUND', message: 'Event not found' });
 
   const [tiers, characters, terms] = await Promise.all([
@@ -87,7 +88,7 @@ export const getCharacter = asyncHandler(async (req, res) => {
   if (!character) return res.status(404).json({ code: 'NOT_FOUND', message: 'Character not found' });
 
   const events = character.relatedEventIds?.length
-    ? await Event.find({ _id: { $in: character.relatedEventIds }, ...notDeleted })
+    ? await Event.find({ _id: { $in: character.relatedEventIds }, ...publicVisible })
         .select(EVENT_CARD_FIELDS)
         .lean()
     : [];
@@ -131,8 +132,8 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
 export const getHomeContent = asyncHandler(async (req, res) => {
   const { country } = req.query;
 
-  const eventFilter = { status: 'upcoming', ...notDeleted };
-  const pastFilter = { status: 'past', ...notDeleted };
+  const eventFilter = { status: 'upcoming', ...publicVisible };
+  const pastFilter = { status: 'past', ...publicVisible };
   const characterFilter = { ...notDeleted };
   if (country) {
     eventFilter.country = country;

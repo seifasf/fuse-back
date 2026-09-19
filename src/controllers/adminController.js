@@ -102,6 +102,10 @@ function sanitizeEventBody(body = {}) {
   }
   if (typeof data.description === 'string') data.description = data.description.trim();
   if (typeof data.category === 'string') data.category = normalizeCategory(data.category) || 'club night';
+  if (typeof data.visibleOnSite === 'boolean') data.visibleOnSite = data.visibleOnSite;
+  else if (data.visibleOnSite === 'true' || data.visibleOnSite === 'false') {
+    data.visibleOnSite = data.visibleOnSite === 'true';
+  }
   if (Array.isArray(data.characterIds)) {
     data.characterIds = data.characterIds.map(String).filter(Boolean).slice(0, 40);
   }
@@ -674,6 +678,10 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   const guestName = String(guest.name).trim();
   const guestEmail = String(guest.email).trim().toLowerCase();
   const guestPhone = String(guest.phone || '').trim() || '—';
+  const members = Array.from({ length: quantity }, () => ({
+    name: guestName,
+    phone: guestPhone === '—' ? '' : guestPhone,
+  }));
   const booking = await Booking.create({
     guest: {
       name: guestName,
@@ -694,6 +702,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
         tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
         qty: quantity,
         unitPrice: 0,
+        members,
       },
     ],
     ticketCount: quantity,
@@ -708,29 +717,30 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   const tickets = [];
   const qrDataUrls = [];
 
-  for (let i = 0; i < quantity; i++) {
-    const ticket = await Ticket.create({
-      bookingId: booking._id,
-      eventId: event._id,
-      tierId: tier._id,
-      code: generateTicketCode(),
-      qrPayload: `pending_${booking._id}_${Date.now()}_${i}`,
-      holderName: booking.guest.name,
-      holderEmail: booking.guest.email,
-      holderPhone: booking.guest.phone,
-      tierName: tier.name,
-      tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
-      eventTitle: event.title,
-    });
+  // One QR covers the full qty for this manual issue (same rule as checkout)
+  const ticket = await Ticket.create({
+    bookingId: booking._id,
+    eventId: event._id,
+    tierId: tier._id,
+    code: generateTicketCode(),
+    qrPayload: `pending_${booking._id}_${Date.now()}`,
+    holderName: guestName,
+    holderEmail: guestEmail,
+    holderPhone: guestPhone === '—' ? '' : guestPhone,
+    members,
+    admitCount: quantity,
+    tierName: tier.name,
+    tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
+    eventTitle: event.title,
+  });
 
-    const qrPayload = getQrPayload(ticket._id, booking._id, event._id);
-    ticket.qrPayload = qrPayload;
-    await ticket.save();
+  const qrPayload = getQrPayload(ticket._id, booking._id, event._id);
+  ticket.qrPayload = qrPayload;
+  await ticket.save();
 
-    const qrDataUrl = await generateTicketQrDataUrl(ticket._id, booking._id, event._id);
-    tickets.push(ticket);
-    qrDataUrls.push({ ticketId: ticket._id, code: ticket.code, qrDataUrl });
-  }
+  const qrDataUrl = await generateTicketQrDataUrl(ticket._id, booking._id, event._id);
+  tickets.push(ticket);
+  qrDataUrls.push({ ticketId: ticket._id, code: ticket.code, qrDataUrl });
 
   await TicketTier.findByIdAndUpdate(tier._id, { $inc: { sold: quantity } });
   await Event.findByIdAndUpdate(event._id, { $inc: { ticketsSold: quantity } });
@@ -790,9 +800,18 @@ export const adminDoorEvents = asyncHandler(async (req, res) => {
     {
       $group: {
         _id: '$eventId',
-        totalGuests: { $sum: 1 },
-        joined: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
-        pending: { $sum: { $cond: [{ $eq: ['$status', 'valid'] }, 1, 0] } },
+        totalGuests: { $sum: { $ifNull: ['$admitCount', 1] } },
+        ticketGroups: { $sum: 1 },
+        joined: {
+          $sum: {
+            $cond: [{ $eq: ['$status', 'used'] }, { $ifNull: ['$admitCount', 1] }, 0],
+          },
+        },
+        pending: {
+          $sum: {
+            $cond: [{ $eq: ['$status', 'valid'] }, { $ifNull: ['$admitCount', 1] }, 0],
+          },
+        },
       },
     },
   ]);
@@ -820,7 +839,7 @@ export const adminDoorEventGuests = asyncHandler(async (req, res) => {
   const event = await Event.findOne({ _id: eventId, deletedAt: null }).lean();
   if (!event) throw new AppError('Event not found', 404, 'NOT_FOUND');
 
-  const filter = { eventId };
+  const filter = { eventId: event._id };
   if (status === 'joined') filter.status = 'used';
   else if (status === 'pending') filter.status = 'valid';
   else if (status === 'cancelled') filter.status = { $in: ['cancelled', 'refunded'] };
@@ -836,36 +855,97 @@ export const adminDoorEventGuests = asyncHandler(async (req, res) => {
     ];
   }
 
-  const [guests, total, joined, pending] = await Promise.all([
+  const limit = Math.min(10_000, Math.max(1, Number(req.query.limit) || 10_000));
+
+  const [ticketDocs, byTierAgg, totalsAgg] = await Promise.all([
     Ticket.find(filter)
-      .sort({ scannedAt: -1, createdAt: -1 })
-      .limit(500)
+      .sort({ tierName: 1, holderName: 1, createdAt: 1 })
+      .limit(limit)
       .lean(),
-    Ticket.countDocuments({ eventId }),
-    Ticket.countDocuments({ eventId, status: 'used' }),
-    Ticket.countDocuments({ eventId, status: 'valid' }),
+    Ticket.aggregate([
+      { $match: { eventId: event._id } },
+      {
+        $group: {
+          _id: { $ifNull: ['$tierName', 'General'] },
+          total: { $sum: { $ifNull: ['$admitCount', 1] } },
+          joined: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'used'] }, { $ifNull: ['$admitCount', 1] }, 0],
+            },
+          },
+          pending: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'valid'] }, { $ifNull: ['$admitCount', 1] }, 0],
+            },
+          },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]),
+    Ticket.aggregate([
+      { $match: { eventId: event._id } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $ifNull: ['$admitCount', 1] } },
+          joined: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'used'] }, { $ifNull: ['$admitCount', 1] }, 0],
+            },
+          },
+          pending: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'valid'] }, { $ifNull: ['$admitCount', 1] }, 0],
+            },
+          },
+        },
+      },
+    ]),
   ]);
+
+  const totals = totalsAgg[0] || { total: 0, joined: 0, pending: 0 };
+
+  const guests = [];
+  for (const g of ticketDocs) {
+    const members =
+      Array.isArray(g.members) && g.members.length
+        ? g.members
+        : [{ name: g.holderName, phone: g.holderPhone || '' }];
+    members.forEach((m, idx) => {
+      guests.push({
+        id: `${g._id}-${idx}`,
+        ticketId: g._id,
+        name: m.name,
+        email: idx === 0 ? g.holderEmail : '',
+        phone: m.phone || '',
+        code: g.code,
+        tierName: g.tierName,
+        status: g.status,
+        joined: g.status === 'used',
+        scannedAt: g.scannedAt || null,
+        createdAt: g.createdAt,
+        admitCount: g.admitCount || members.length || 1,
+        partyIndex: idx + 1,
+        partySize: members.length,
+      });
+    });
+  }
 
   res.json({
     event,
     summary: {
-      total,
-      joined,
-      pending,
-      joinRate: total ? Math.round((joined / total) * 100) : 0,
+      total: totals.total,
+      joined: totals.joined,
+      pending: totals.pending,
+      joinRate: totals.total ? Math.round((totals.joined / totals.total) * 100) : 0,
+      byTier: byTierAgg.map((row) => ({
+        tierName: row._id,
+        total: row.total,
+        joined: row.joined,
+        pending: row.pending,
+      })),
     },
-    guests: guests.map((g) => ({
-      id: g._id,
-      name: g.holderName,
-      email: g.holderEmail,
-      phone: g.holderPhone,
-      code: g.code,
-      tierName: g.tierName,
-      status: g.status,
-      joined: g.status === 'used',
-      scannedAt: g.scannedAt || null,
-      createdAt: g.createdAt,
-    })),
+    guests,
   });
 });
 

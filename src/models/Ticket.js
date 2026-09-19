@@ -37,6 +37,19 @@ const ticketSchema = new mongoose.Schema(
     holderName: { type: String, required: true, trim: true, maxlength: 120 },
     holderEmail: { type: String, lowercase: true, trim: true, default: '' },
     holderPhone: { type: String, trim: true, default: '' },
+    /** People covered by this QR (same tier). Length should match admitCount. */
+    members: {
+      type: [
+        {
+          name: { type: String, required: true, trim: true, maxlength: 120 },
+          phone: { type: String, required: true, trim: true, maxlength: 32 },
+        },
+      ],
+      default: [],
+      validate: [(arr) => arr.length <= 50, 'Max 50 members per ticket'],
+    },
+    /** How many people this QR admits (one QR per tier line in an order). */
+    admitCount: { type: Number, default: 1, min: 1, max: 50 },
     tierName: { type: String, required: true },
     tierColor: { type: String, default: '#64748B', maxlength: 7 },
     eventTitle: { type: String, required: true },

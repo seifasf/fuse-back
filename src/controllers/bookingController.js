@@ -14,7 +14,7 @@ import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider, acceptedTerms } = req.body;
-  if (!eventId || !items?.length || !guest?.name || !guest?.email || !guest?.phone) {
+  if (!eventId || !items?.length || !guest?.email) {
     throw new AppError('Missing booking fields', 400, 'VALIDATION_ERROR');
   }
   if (acceptedTerms !== true) {
@@ -29,6 +29,9 @@ export const createBooking = asyncHandler(async (req, res) => {
   if (!event || !['upcoming', 'live'].includes(event.status)) {
     throw new AppError('Event not available', 400, 'EVENT_UNAVAILABLE');
   }
+  if (event.visibleOnSite === false) {
+    throw new AppError('Event is not available on the website', 400, 'EVENT_HIDDEN');
+  }
 
   const currency = currencyForCountry(event.country);
   let total = 0;
@@ -38,26 +41,64 @@ export const createBooking = asyncHandler(async (req, res) => {
   for (const item of items) {
     const tier = await TicketTier.findOne({ _id: item.tierId, eventId, isActive: true });
     if (!tier) throw new AppError('Invalid ticket tier', 400, 'INVALID_TIER');
-    if (tier.sold + item.qty > tier.quantity) {
+    const qty = Math.max(0, Number(item.qty) || 0);
+    if (qty < 1) throw new AppError('Invalid ticket quantity', 400, 'VALIDATION_ERROR');
+    if (tier.sold + qty > tier.quantity) {
       throw new AppError(`Not enough tickets for ${tier.name}`, 400, 'SOLD_OUT');
     }
-    if (item.qty > tier.maxPerOrder) {
+    if (qty > tier.maxPerOrder) {
       throw new AppError(`Max ${tier.maxPerOrder} tickets per order for ${tier.name}`, 400, 'LIMIT');
     }
+
+    const rawMembers = Array.isArray(item.members) ? item.members : [];
+    if (rawMembers.length !== qty) {
+      throw new AppError(
+        `Add name and phone for each of the ${qty} ${tier.name} guest(s)`,
+        400,
+        'MEMBERS_REQUIRED'
+      );
+    }
+    const members = rawMembers.map((m, idx) => {
+      const name = typeof m?.name === 'string' ? m.name.trim() : '';
+      const phone = typeof m?.phone === 'string' ? m.phone.trim() : '';
+      if (!name || name.length < 2) {
+        throw new AppError(`Guest ${idx + 1} name is required for ${tier.name}`, 400, 'VALIDATION_ERROR');
+      }
+      if (!phone || phone.replace(/\D/g, '').length < 8) {
+        throw new AppError(`Guest ${idx + 1} phone is required for ${tier.name}`, 400, 'VALIDATION_ERROR');
+      }
+      return { name: name.slice(0, 120), phone: phone.slice(0, 32) };
+    });
+
     validatedItems.push({
       tierId: tier._id,
       tierName: tier.name,
       tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
-      qty: item.qty,
+      qty,
       unitPrice: tier.price,
+      members,
     });
-    total += tier.price * item.qty;
-    ticketCount += item.qty;
+    total += tier.price * qty;
+    ticketCount += qty;
   }
+
+  const email = String(guest.email).trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError('Valid email is required', 400, 'VALIDATION_ERROR');
+  }
+  const primary = validatedItems[0]?.members?.[0];
+  const guestName =
+    (typeof guest.name === 'string' && guest.name.trim()) || primary?.name || 'Guest';
+  const guestPhone =
+    (typeof guest.phone === 'string' && guest.phone.trim()) || primary?.phone || '';
 
   const booking = await Booking.create({
     clientId: req.user?._id || null,
-    guest,
+    guest: {
+      name: guestName.slice(0, 120),
+      email,
+      phone: guestPhone.slice(0, 32),
+    },
     eventId,
     eventSnapshot: {
       title: event.title,
@@ -95,6 +136,10 @@ export const confirmPayment = asyncHandler(async (req, res) => {
       const qrDataUrl = t.qrPayload
         ? await QRCode.toDataURL(t.qrPayload, { margin: 1, width: 300 })
         : await generateTicketQrDataUrl(t._id, booking._id, t.eventId);
+      const members =
+        Array.isArray(t.members) && t.members.length
+          ? t.members.map((m) => ({ name: m.name, phone: m.phone }))
+          : [{ name: t.holderName, phone: t.holderPhone || '' }];
       out.push({
         id: t._id,
         code: t.code,
@@ -103,6 +148,8 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         tierColor: t.tierColor,
         eventTitle: t.eventTitle,
         holderName: t.holderName,
+        admitCount: t.admitCount || members.length || 1,
+        members,
         qrDataUrl,
       });
     }
@@ -134,26 +181,40 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   const tickets = [];
 
   for (const item of booking.items) {
-    for (let i = 0; i < item.qty; i++) {
-      const ticket = await Ticket.create({
-        bookingId: booking._id,
-        eventId,
-        tierId: item.tierId,
-        code: generateTicketCode(),
-        qrPayload: `pending_${booking._id}_${Date.now()}_${i}`,
-        holderName: booking.guest.name,
-        holderEmail: booking.guest.email,
-        holderPhone: booking.guest.phone,
-        tierName: item.tierName,
-        tierColor: normalizeHexColor(item.tierColor || colorForTierName(item.tierName)),
-        eventTitle,
-      });
+    const members =
+      Array.isArray(item.members) && item.members.length === item.qty
+        ? item.members.map((m) => ({
+            name: String(m.name || '').trim(),
+            phone: String(m.phone || '').trim(),
+          }))
+        : Array.from({ length: item.qty }, () => ({
+            name: booking.guest.name,
+            phone: booking.guest.phone || '',
+          }));
 
-      const qrPayload = getQrPayload(ticket._id, booking._id, eventId);
-      ticket.qrPayload = qrPayload;
-      await ticket.save();
-      tickets.push(ticket);
-    }
+    const holderName = members.map((m) => m.name).filter(Boolean).join(', ') || booking.guest.name;
+    const holderPhone = members[0]?.phone || booking.guest.phone || '';
+
+    const ticket = await Ticket.create({
+      bookingId: booking._id,
+      eventId,
+      tierId: item.tierId,
+      code: generateTicketCode(),
+      qrPayload: `pending_${booking._id}_${Date.now()}_${item.tierId}`,
+      holderName: holderName.slice(0, 120),
+      holderEmail: booking.guest.email,
+      holderPhone: holderPhone.slice(0, 32),
+      members,
+      admitCount: item.qty,
+      tierName: item.tierName,
+      tierColor: normalizeHexColor(item.tierColor || colorForTierName(item.tierName)),
+      eventTitle,
+    });
+
+    const qrPayload = getQrPayload(ticket._id, booking._id, eventId);
+    ticket.qrPayload = qrPayload;
+    await ticket.save();
+    tickets.push(ticket);
 
     await TicketTier.findByIdAndUpdate(item.tierId, { $inc: { sold: item.qty } });
   }

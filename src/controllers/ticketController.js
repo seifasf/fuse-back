@@ -123,6 +123,11 @@ export const scanTicket = asyncHandler(async (req, res) => {
         tier: ticket.tierName,
         tierColor: ticket.tierColor || '',
         code: ticket.code,
+        admitCount: ticket.admitCount || 1,
+        members:
+          Array.isArray(ticket.members) && ticket.members.length
+            ? ticket.members.map((m) => ({ name: m.name, phone: m.phone }))
+            : [{ name: ticket.holderName, phone: ticket.holderPhone || '' }],
         scanAttempts: ticket.scanAttempts,
       },
     });
@@ -147,7 +152,9 @@ export const scanTicket = asyncHandler(async (req, res) => {
   ticket.scannedBy = req.user._id;
   await ticket.save();
 
-  await Event.findByIdAndUpdate(ticket.eventId, { $inc: { checkInCount: 1 } });
+  await Event.findByIdAndUpdate(ticket.eventId, {
+    $inc: { checkInCount: Math.max(1, ticket.admitCount || 1) },
+  });
 
   await ScanLog.create({
     ticketId: ticket._id,
@@ -159,6 +166,11 @@ export const scanTicket = asyncHandler(async (req, res) => {
     code: ticket.code,
   });
 
+  const members =
+    Array.isArray(ticket.members) && ticket.members.length
+      ? ticket.members.map((m) => ({ name: m.name, phone: m.phone }))
+      : [{ name: ticket.holderName, phone: ticket.holderPhone || '' }];
+
   res.json({
     status: 'valid',
     ticket: {
@@ -169,6 +181,8 @@ export const scanTicket = asyncHandler(async (req, res) => {
       tier: ticket.tierName,
       tierColor: ticket.tierColor || '',
       code: ticket.code,
+      admitCount: ticket.admitCount || members.length || 1,
+      members,
       scannedAt: ticket.scannedAt,
       scanAttempts: ticket.scanAttempts,
     },

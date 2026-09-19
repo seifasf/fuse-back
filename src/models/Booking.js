@@ -9,6 +9,17 @@ const bookingItemSchema = new mongoose.Schema(
     qty: { type: Number, required: true, min: 1, max: 50 },
     unitPrice: { type: Number, required: true, min: 0 },
     tierColor: { type: String, default: '#64748B', maxlength: 7 },
+    /** One entry per admit — length must match qty (name + phone for each person). */
+    members: {
+      type: [
+        {
+          name: { type: String, required: true, trim: true, maxlength: 120 },
+          phone: { type: String, required: true, trim: true, maxlength: 32 },
+        },
+      ],
+      default: [],
+      validate: [(arr) => arr.length <= 50, 'Max 50 members per line'],
+    },
   },
   { _id: false }
 );

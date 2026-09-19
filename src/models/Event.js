@@ -56,6 +56,8 @@ const eventSchema = new mongoose.Schema(
     },
     capacity: { type: Number, default: 500, min: 0, max: 500000 },
     featured: { type: Boolean, default: false },
+    /** When false, event is hidden from the public website (admin can still manage it). */
+    visibleOnSite: { type: Boolean, default: true },
     /** Cached counters — updated on booking confirm / gate scan */
     ticketsSold: { type: Number, default: 0, min: 0 },
     checkInCount: { type: Number, default: 0, min: 0 },
