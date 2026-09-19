@@ -85,5 +85,7 @@ bookingSchema.index({ eventId: 1, status: 1, createdAt: -1 });
 bookingSchema.index({ clientId: 1, status: 1 });
 bookingSchema.index({ paymentRef: 1 });
 bookingSchema.index({ status: 1, expiresAt: 1 });
+bookingSchema.index({ status: 1, 'eventSnapshot.country': 1, eventId: 1 });
+bookingSchema.index({ status: 1, 'items.tierName': 1 });
 
 export const Booking = mongoose.model('Booking', bookingSchema);

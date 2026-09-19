@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Booking } from '../models/Booking.js';
 import { Event } from '../models/Event.js';
 import { TicketTier } from '../models/TicketTier.js';
@@ -15,7 +16,6 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import bcrypt from 'bcryptjs';
 import { generateTicketCode } from '../utils/ticketCode.js';
 import { generateTicketQrDataUrl, getQrPayload } from '../services/ticketQr.js';
-import { sendTicketEmail } from '../services/email.js';
 import { sendTicketWhatsApp } from '../services/whatsapp.js';
 
 /* ??? Events ??????????????????????????????????????????????? */
@@ -592,10 +592,27 @@ export const adminDeleteBanner = asyncHandler(async (req, res) => {
 /* ??? Clients & manual tickets ????????????????????????????? */
 
 export const adminListClients = asyncHandler(async (req, res) => {
-  const { search = '', page = 1, limit = 30 } = req.query;
+  const {
+    search = '',
+    page = 1,
+    limit = 30,
+    eventId = '',
+    tier = '',
+    country = '',
+  } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const matchPaid = { status: 'paid' };
+  if (eventId && mongoose.Types.ObjectId.isValid(String(eventId))) {
+    matchPaid.eventId = new mongoose.Types.ObjectId(String(eventId));
+  }
+  if (country) {
+    matchPaid['eventSnapshot.country'] = String(country).toUpperCase();
+  }
+  if (tier) {
+    matchPaid['items.tierName'] = { $regex: `^${String(tier).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+  }
+
   const pipeline = [
     { $match: matchPaid },
     {
@@ -610,6 +627,16 @@ export const adminListClients = asyncHandler(async (req, res) => {
         currencies: { $addToSet: '$currency' },
         lastBookingAt: { $max: '$createdAt' },
         firstBookingAt: { $min: '$createdAt' },
+        purchases: {
+          $push: {
+            eventId: '$eventId',
+            title: '$eventSnapshot.title',
+            country: '$eventSnapshot.country',
+            startsAt: '$eventSnapshot.startsAt',
+            items: '$items',
+            createdAt: '$createdAt',
+          },
+        },
       },
     },
     { $sort: { lastBookingAt: -1 } },
@@ -628,29 +655,69 @@ export const adminListClients = asyncHandler(async (req, res) => {
     });
   }
 
-  const [facet] = await Booking.aggregate([
-    ...pipeline,
-    {
-      $facet: {
-        clients: [{ $skip: skip }, { $limit: Number(limit) }],
-        total: [{ $count: 'count' }],
+  const [[facet], filterEvents, filterTiers] = await Promise.all([
+    Booking.aggregate([
+      ...pipeline,
+      {
+        $facet: {
+          clients: [{ $skip: skip }, { $limit: Number(limit) }],
+          total: [{ $count: 'count' }],
+        },
       },
-    },
+    ]),
+    Event.find({ deletedAt: null })
+      .select('_id title country startsAt')
+      .sort({ startsAt: -1 })
+      .lean(),
+    TicketTier.distinct('name', { isActive: true }),
   ]);
 
   res.json({
-    clients: facet.clients.map((c) => ({
-      id: c._id,
-      name: c.name,
-      email: c.email,
-      phone: c.phone,
-      bookings: c.bookings,
-      tickets: c.tickets,
-      spent: c.spent,
-      currencies: c.currencies,
-      lastBookingAt: c.lastBookingAt,
-      firstBookingAt: c.firstBookingAt,
-    })),
+    clients: facet.clients.map((c) => {
+      const eventMap = new Map();
+      for (const p of c.purchases || []) {
+        const key = String(p.eventId || '');
+        if (!key) continue;
+        if (!eventMap.has(key)) {
+          eventMap.set(key, {
+            eventId: key,
+            title: p.title || 'Event',
+            country: p.country || '',
+            startsAt: p.startsAt || null,
+            tiers: [],
+          });
+        }
+        const entry = eventMap.get(key);
+        for (const item of p.items || []) {
+          const tierName = item.tierName || 'Ticket';
+          const existing = entry.tiers.find((t) => t.name === tierName);
+          if (existing) existing.qty += Number(item.qty) || 0;
+          else entry.tiers.push({ name: tierName, qty: Number(item.qty) || 0, color: item.tierColor || '' });
+        }
+      }
+      return {
+        id: c._id,
+        name: c.name,
+        email: c.email,
+        phone: c.phone,
+        bookings: c.bookings,
+        tickets: c.tickets,
+        spent: c.spent,
+        currencies: c.currencies,
+        lastBookingAt: c.lastBookingAt,
+        firstBookingAt: c.firstBookingAt,
+        events: Array.from(eventMap.values()),
+      };
+    }),
+    filters: {
+      countries: [...new Set(filterEvents.map((e) => e.country).filter(Boolean))].sort(),
+      tiers: (filterTiers || []).filter(Boolean).sort(),
+      events: filterEvents.map((e) => ({
+        id: String(e._id),
+        title: e.title,
+        country: e.country,
+      })),
+    },
     total: facet.total[0]?.count || 0,
     page: Number(page),
     limit: Number(limit),
@@ -658,7 +725,7 @@ export const adminListClients = asyncHandler(async (req, res) => {
 });
 
 export const adminIssueManualTicket = asyncHandler(async (req, res) => {
-  const { eventId, tierId, qty = 1, guest, sendEmail = false, sendWhatsApp = false, note = '' } = req.body;
+  const { eventId, tierId, qty = 1, guest, sendWhatsApp = false, note = '' } = req.body;
 
   if (!eventId || !tierId || !guest?.name || !guest?.email) {
     throw new AppError('Event, tier, and guest name/email are required', 400, 'VALIDATION_ERROR');
@@ -745,21 +812,6 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   await TicketTier.findByIdAndUpdate(tier._id, { $inc: { sold: quantity } });
   await Event.findByIdAndUpdate(event._id, { $inc: { ticketsSold: quantity } });
 
-  // Optional delivery — off by default until SMTP / WhatsApp are connected
-  if (sendEmail) {
-    try {
-      await sendTicketEmail({
-        to: booking.guest.email,
-        name: booking.guest.name,
-        eventTitle: event.title,
-        tickets: qrDataUrls,
-      });
-      booking.emailSentAt = new Date();
-    } catch (err) {
-      console.error('Manual ticket email failed:', err.message);
-    }
-  }
-
   if (sendWhatsApp) {
     try {
       await sendTicketWhatsApp({
@@ -787,7 +839,6 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       eventTitle: t.eventTitle,
       qrDataUrl: qrDataUrls[i].qrDataUrl,
     })),
-    emailSent: Boolean(booking.emailSentAt),
     whatsappSent: Boolean(booking.whatsappSentAt),
     delivery: 'download',
   });
@@ -910,19 +961,22 @@ export const adminDoorEventGuests = asyncHandler(async (req, res) => {
     const members =
       Array.isArray(g.members) && g.members.length
         ? g.members
-        : [{ name: g.holderName, phone: g.holderPhone || '' }];
+        : [{ name: g.holderName, phone: g.holderPhone || '', checkedIn: g.status === 'used', checkedInAt: g.scannedAt }];
     members.forEach((m, idx) => {
+      const hasExplicitCheckin = typeof m.checkedIn === 'boolean';
+      const memberJoined = hasExplicitCheckin ? Boolean(m.checkedIn) : g.status === 'used';
       guests.push({
         id: `${g._id}-${idx}`,
         ticketId: g._id,
         name: m.name,
-        email: idx === 0 ? g.holderEmail : '',
+        email: idx === 0 ? g.holderEmail || '' : '',
         phone: m.phone || '',
         code: g.code,
         tierName: g.tierName,
+        tierColor: g.tierColor || '',
         status: g.status,
-        joined: g.status === 'used',
-        scannedAt: g.scannedAt || null,
+        joined: memberJoined,
+        scannedAt: m.checkedInAt || (memberJoined ? g.scannedAt : null) || null,
         createdAt: g.createdAt,
         admitCount: g.admitCount || members.length || 1,
         partyIndex: idx + 1,

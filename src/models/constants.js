@@ -38,7 +38,7 @@ export const SECTION_TYPES = [
   'custom',
 ];
 
-export const SCAN_RESULTS = ['valid', 'already_used', 'invalid', 'cancelled', 'forbidden'];
+export const SCAN_RESULTS = ['valid', 'already_used', 'invalid', 'cancelled', 'forbidden', 'partial'];
 
 /** Country ? default currency */
 export function currencyForCountry(country) {

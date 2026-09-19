@@ -222,7 +222,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   await Event.findByIdAndUpdate(eventId, { $inc: { ticketsSold: booking.ticketCount } });
   await booking.save();
 
-  // Email / WhatsApp disabled until providers are connected — tickets are downloadable in the UI
+  // Tickets are downloadable in the UI — no email delivery
   res.json({
     booking,
     tickets: await formatTickets(tickets),

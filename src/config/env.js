@@ -88,13 +88,6 @@ export const env = {
   qrSecret: requiredInProd('QR_SECRET', process.env.QR_SECRET, {
     rejectDefaults: ['dev-qr-secret', 'change-me-qr-secret'],
   }) || 'dev-qr-secret',
-  emailFrom: process.env.EMAIL_FROM || 'fuse.contact@fuseevents.net',
-  smtp: {
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
   whatsapp: {
     token: process.env.WHATSAPP_TOKEN,
     phoneId: process.env.WHATSAPP_PHONE_ID,

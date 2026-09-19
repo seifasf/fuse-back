@@ -7,7 +7,7 @@ export async function sendTicketWhatsApp({ phone, name, eventTitle, ticketCount 
   }
 
   const cleanPhone = phone.replace(/\D/g, '');
-  const message = `Hi ${name}! Your ${ticketCount} ticket(s) for ${eventTitle} are confirmed. Check your email for QR codes. See you at FUSE!`;
+  const message = `Hi ${name}! Your ${ticketCount} ticket(s) for ${eventTitle} are confirmed. Download your QR from FUSE. See you there!`;
 
   const res = await fetch(
     `https://graph.facebook.com/v19.0/${env.whatsapp.phoneId}/messages`,

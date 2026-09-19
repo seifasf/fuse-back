@@ -43,6 +43,8 @@ const ticketSchema = new mongoose.Schema(
         {
           name: { type: String, required: true, trim: true, maxlength: 120 },
           phone: { type: String, required: true, trim: true, maxlength: 32 },
+          checkedIn: { type: Boolean, default: false },
+          checkedInAt: { type: Date },
         },
       ],
       default: [],
@@ -50,6 +52,8 @@ const ticketSchema = new mongoose.Schema(
     },
     /** How many people this QR admits (one QR per tier line in an order). */
     admitCount: { type: Number, default: 1, min: 1, max: 50 },
+    /** Running count of members who have entered (denormalized). */
+    checkedInCount: { type: Number, default: 0, min: 0, max: 50 },
     tierName: { type: String, required: true },
     tierColor: { type: String, default: '#64748B', maxlength: 7 },
     eventTitle: { type: String, required: true },
