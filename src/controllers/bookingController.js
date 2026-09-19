@@ -116,13 +116,20 @@ export const createBooking = asyncHandler(async (req, res) => {
   });
 
   const paymentProvider = getPaymentProvider(event.country, provider);
-  const returnUrl = `${env.clientUrl}/booking/${booking._id}/confirmation`;
+  const returnPath = `/booking/${booking._id}/confirmation`;
+  const returnUrl = `${env.clientUrl}${returnPath}`;
   const payment = await paymentProvider.createPayment({ booking, returnUrl });
 
   booking.paymentRef = payment.paymentRef;
   await booking.save();
 
-  res.status(201).json({ booking, paymentUrl: payment.paymentUrl });
+  // Prefer same-origin path so the SPA can navigate even if CLIENT_URL is misconfigured
+  const paymentUrl =
+    typeof payment.paymentUrl === 'string' && payment.paymentUrl.includes('/booking/')
+      ? `${returnPath}?bookingId=${booking._id}&status=success`
+      : payment.paymentUrl || `${returnPath}?status=success`;
+
+  res.status(201).json({ booking, paymentUrl });
 });
 
 export const confirmPayment = asyncHandler(async (req, res) => {
