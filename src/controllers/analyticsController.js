@@ -2,10 +2,17 @@ import { Event } from '../models/Event.js';
 import { Booking } from '../models/Booking.js';
 import { Ticket } from '../models/Ticket.js';
 import { TicketTier } from '../models/TicketTier.js';
-import { Character } from '../models/Character.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { cacheGet, cacheSet } from '../utils/memoryCache.js';
 
 export const getOverview = asyncHandler(async (req, res) => {
+  const cacheKey = 'analytics:overview';
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
   const [
     totalEvents,
     upcomingEvents,
@@ -15,30 +22,112 @@ export const getOverview = asyncHandler(async (req, res) => {
     paidBookings,
     totalTickets,
     usedTickets,
-    eventsList,
+    eventsLite,
+    revAgg,
+    categoryAgg,
+    topEvents,
+    tierAgg,
+    timelineAgg,
+    categoryEventCounts,
   ] = await Promise.all([
-    Event.countDocuments(),
-    Event.countDocuments({ status: 'upcoming' }),
-    Event.countDocuments({ status: 'live' }),
-    Event.countDocuments({ status: 'past' }),
+    Event.countDocuments({ deletedAt: null }),
+    Event.countDocuments({ deletedAt: null, status: 'upcoming' }),
+    Event.countDocuments({ deletedAt: null, status: 'live' }),
+    Event.countDocuments({ deletedAt: null, status: 'past' }),
     Booking.countDocuments(),
     Booking.countDocuments({ status: 'paid' }),
     Ticket.countDocuments(),
     Ticket.countDocuments({ status: 'used' }),
-    Event.find({}).lean(),
-  ]);
-
-  // Aggregate revenue by currency
-  const revAgg = await Booking.aggregate([
-    { $match: { status: 'paid' } },
-    { $group: { _id: '$currency', total: { $sum: '$total' }, ticketsSold: { $sum: '$ticketCount' }, bookings: { $sum: 1 } } },
+    Event.find({ deletedAt: null }).select('country category').lean(),
+    Booking.aggregate([
+      { $match: { status: 'paid' } },
+      {
+        $group: {
+          _id: '$currency',
+          total: { $sum: '$total' },
+          ticketsSold: { $sum: '$ticketCount' },
+          bookings: { $sum: 1 },
+        },
+      },
+    ]),
+    Booking.aggregate([
+      { $match: { status: 'paid' } },
+      { $lookup: { from: 'events', localField: 'eventId', foreignField: '_id', as: 'event' } },
+      { $unwind: '$event' },
+      {
+        $group: {
+          _id: '$event.category',
+          ticketsSold: { $sum: '$ticketCount' },
+          revenueKWD: { $sum: { $cond: [{ $eq: ['$currency', 'KWD'] }, '$total', 0] } },
+          revenueEGP: { $sum: { $cond: [{ $eq: ['$currency', 'EGP'] }, '$total', 0] } },
+          bookingsCount: { $sum: 1 },
+        },
+      },
+    ]),
+    Booking.aggregate([
+      { $match: { status: 'paid' } },
+      {
+        $group: {
+          _id: '$eventId',
+          revenue: { $sum: '$total' },
+          currency: { $first: '$currency' },
+          ticketsSold: { $sum: '$ticketCount' },
+          bookings: { $sum: 1 },
+        },
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 6 },
+      { $lookup: { from: 'events', localField: '_id', foreignField: '_id', as: 'event' } },
+      { $unwind: '$event' },
+      {
+        $project: {
+          title: '$event.title',
+          slug: '$event.slug',
+          category: '$event.category',
+          country: '$event.country',
+          venue: '$event.venue',
+          capacity: '$event.capacity',
+          coverImage: '$event.coverImage',
+          revenue: 1,
+          currency: 1,
+          ticketsSold: 1,
+          bookings: 1,
+        },
+      },
+    ]),
+    Ticket.aggregate([
+      {
+        $group: {
+          _id: '$tierName',
+          count: { $sum: 1 },
+          usedCount: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+        },
+      },
+      { $sort: { count: -1 } },
+    ]),
+    Booking.aggregate([
+      { $match: { status: 'paid' } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          tickets: { $sum: '$ticketCount' },
+          total: { $sum: '$total' },
+          bookings: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+      { $limit: 90 },
+    ]),
+    Event.aggregate([
+      { $match: { deletedAt: null } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+    ]),
   ]);
 
   let kwdRevenue = 0;
   let egpRevenue = 0;
   let kwdTickets = 0;
   let egpTickets = 0;
-
   for (const r of revAgg) {
     if (r._id === 'KWD') {
       kwdRevenue = r.total;
@@ -49,23 +138,6 @@ export const getOverview = asyncHandler(async (req, res) => {
     }
   }
 
-  // Real FUSE Event Category breakdown
-  const categoryAgg = await Booking.aggregate([
-    { $match: { status: 'paid' } },
-    { $lookup: { from: 'events', localField: 'eventId', foreignField: '_id', as: 'event' } },
-    { $unwind: '$event' },
-    {
-      $group: {
-        _id: '$event.category',
-        ticketsSold: { $sum: '$ticketCount' },
-        revenueKWD: { $sum: { $cond: [{ $eq: ['$currency', 'KWD'] }, '$total', 0] } },
-        revenueEGP: { $sum: { $cond: [{ $eq: ['$currency', 'EGP'] }, '$total', 0] } },
-        bookingsCount: { $sum: 1 },
-      },
-    },
-  ]);
-
-  // Build category stats combined with total events in each category
   const categoryMap = {
     'club night': { label: 'Club Nights', count: 0 },
     festival: { label: 'Festivals', count: 0 },
@@ -76,108 +148,47 @@ export const getOverview = asyncHandler(async (req, res) => {
     private: { label: 'Private Lounges', count: 0 },
   };
 
-  for (const ev of eventsList) {
-    const cat = ev.category || 'club night';
+  for (const row of categoryEventCounts) {
+    const cat = row._id || 'club night';
     if (!categoryMap[cat]) {
-      categoryMap[cat] = { label: cat.charAt(0).toUpperCase() + cat.slice(1), count: 0 };
+      categoryMap[cat] = {
+        label: String(cat).charAt(0).toUpperCase() + String(cat).slice(1),
+        count: 0,
+      };
     }
-    categoryMap[cat].count += 1;
+    categoryMap[cat].count = row.count;
   }
 
-  const categoryBreakdown = Object.keys(categoryMap).map((catKey) => {
-    const agg = categoryAgg.find((c) => c._id === catKey);
-    const ticketsSold = agg ? agg.ticketsSold : 0;
-    const revenueKWD = agg ? agg.revenueKWD : 0;
-    const revenueEGP = agg ? agg.revenueEGP : 0;
-    const bookingsCount = agg ? agg.bookingsCount : 0;
+  const categoryBreakdown = Object.keys(categoryMap)
+    .map((catKey) => {
+      const agg = categoryAgg.find((c) => c._id === catKey);
+      const ticketsSold = agg ? agg.ticketsSold : 0;
+      return {
+        category: catKey,
+        label: categoryMap[catKey].label,
+        eventsCount: categoryMap[catKey].count,
+        ticketsSold,
+        revenueKWD: agg ? agg.revenueKWD : 0,
+        revenueEGP: agg ? agg.revenueEGP : 0,
+        bookingsCount: agg ? agg.bookingsCount : 0,
+        percentage: totalTickets > 0 ? Math.round((ticketsSold / totalTickets) * 100) : 0,
+      };
+    })
+    .filter((c) => c.eventsCount > 0 || c.ticketsSold > 0);
 
-    return {
-      category: catKey,
-      label: categoryMap[catKey].label,
-      eventsCount: categoryMap[catKey].count,
-      ticketsSold,
-      revenueKWD,
-      revenueEGP,
-      bookingsCount,
-      percentage: totalTickets > 0 ? Math.round((ticketsSold / totalTickets) * 100) : 0,
-    };
-  }).filter((c) => c.eventsCount > 0 || c.ticketsSold > 0);
+  const kwEventIds = eventsLite.filter((e) => e.country === 'KW').map((e) => e._id);
+  const egEventIds = eventsLite.filter((e) => e.country === 'EG').map((e) => e._id);
 
-  // Top events with complete metadata
-  const topEvents = await Booking.aggregate([
-    { $match: { status: 'paid' } },
-    {
-      $group: {
-        _id: '$eventId',
-        revenue: { $sum: '$total' },
-        currency: { $first: '$currency' },
-        ticketsSold: { $sum: '$ticketCount' },
-        bookings: { $sum: 1 },
-      },
-    },
-    { $sort: { revenue: -1 } },
-    { $limit: 6 },
-    {
-      $lookup: { from: 'events', localField: '_id', foreignField: '_id', as: 'event' },
-    },
-    { $unwind: '$event' },
-    {
-      $project: {
-        title: '$event.title',
-        slug: '$event.slug',
-        category: '$event.category',
-        country: '$event.country',
-        venue: '$event.venue',
-        capacity: '$event.capacity',
-        coverImage: '$event.coverImage',
-        revenue: 1,
-        currency: 1,
-        ticketsSold: 1,
-        bookings: 1,
-      },
-    },
+  const [kwUsedTickets, egUsedTickets] = await Promise.all([
+    kwEventIds.length
+      ? Ticket.countDocuments({ status: 'used', eventId: { $in: kwEventIds } })
+      : 0,
+    egEventIds.length
+      ? Ticket.countDocuments({ status: 'used', eventId: { $in: egEventIds } })
+      : 0,
   ]);
 
-  // Ticket tier breakdown
-  const tierAgg = await Ticket.aggregate([
-    {
-      $group: {
-        _id: '$tierName',
-        count: { $sum: 1 },
-        usedCount: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
-      },
-    },
-    { $sort: { count: -1 } },
-  ]);
-
-  // Daily timeline (last 7 days of ticket activity)
-  const timelineAgg = await Booking.aggregate([
-    { $match: { status: 'paid' } },
-    {
-      $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-        tickets: { $sum: '$ticketCount' },
-        total: { $sum: '$total' },
-        bookings: { $sum: 1 },
-      },
-    },
-    { $sort: { _id: 1 } },
-  ]);
-
-  // Country stats
-  const kwEvents = eventsList.filter((e) => e.country === 'KW').length;
-  const egEvents = eventsList.filter((e) => e.country === 'EG').length;
-
-  const kwUsedTickets = await Ticket.countDocuments({
-    status: 'used',
-    eventId: { $in: eventsList.filter((e) => e.country === 'KW').map((e) => e._id) },
-  });
-  const egUsedTickets = await Ticket.countDocuments({
-    status: 'used',
-    eventId: { $in: eventsList.filter((e) => e.country === 'EG').map((e) => e._id) },
-  });
-
-  res.json({
+  const payload = {
     totalEvents,
     upcomingEvents,
     liveEvents,
@@ -205,14 +216,14 @@ export const getOverview = asyncHandler(async (req, res) => {
     })),
     countryBreakdown: {
       kw: {
-        eventsCount: kwEvents,
+        eventsCount: kwEventIds.length,
         ticketsSold: kwdTickets,
         revenue: kwdRevenue,
         usedTickets: kwUsedTickets,
         checkInRate: kwdTickets > 0 ? Math.round((kwUsedTickets / kwdTickets) * 100) : 0,
       },
       eg: {
-        eventsCount: egEvents,
+        eventsCount: egEventIds.length,
         ticketsSold: egpTickets,
         revenue: egpRevenue,
         usedTickets: egUsedTickets,
@@ -225,57 +236,87 @@ export const getOverview = asyncHandler(async (req, res) => {
       revenue: t.total,
       bookings: t.bookings,
     })),
-  });
+  };
+
+  cacheSet(cacheKey, payload, 20_000);
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });
 
 export const getEventAnalytics = asyncHandler(async (req, res) => {
   const eventId = req.params.id;
-  const event = await Event.findById(eventId).lean();
+  const event = await Event.findById(eventId)
+    .select('title slug country venue capacity coverImage category status startsAt')
+    .lean();
   if (!event) return res.status(404).json({ code: 'NOT_FOUND', message: 'Event not found' });
 
-  const [bookings, tickets, tiers, usedTickets] = await Promise.all([
-    Booking.find({ eventId, status: 'paid' }).lean(),
-    Ticket.find({ eventId }).lean(),
-    TicketTier.find({ eventId }).lean(),
-    Ticket.countDocuments({ eventId, status: 'used' }),
-  ]);
-
-  const revenue = bookings.reduce((sum, b) => sum + b.total, 0);
-  const salesByTier = tiers.map((tier) => ({
-    name: tier.name,
-    sold: tier.sold,
-    quantity: tier.quantity,
-    revenue: tier.sold * tier.price,
-  }));
-
-  const salesOverTime = await Booking.aggregate([
-    { $match: { eventId: event._id, status: 'paid' } },
-    {
-      $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-        count: { $sum: 1 },
-        revenue: { $sum: '$total' },
+  const [paidStats, ticketStats, tiers, salesOverTime] = await Promise.all([
+    Booking.aggregate([
+      { $match: { eventId: event._id, status: 'paid' } },
+      {
+        $group: {
+          _id: null,
+          revenue: { $sum: '$total' },
+          bookings: { $sum: 1 },
+        },
       },
-    },
-    { $sort: { _id: 1 } },
+    ]),
+    Ticket.aggregate([
+      { $match: { eventId: event._id } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          used: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+        },
+      },
+    ]),
+    TicketTier.find({ eventId })
+      .select('name sold quantity price')
+      .lean(),
+    Booking.aggregate([
+      { $match: { eventId: event._id, status: 'paid' } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 },
+          revenue: { $sum: '$total' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]),
   ]);
+
+  const revenue = paidStats[0]?.revenue || 0;
+  const bookingsCount = paidStats[0]?.bookings || 0;
+  const ticketsSold = ticketStats[0]?.total || 0;
+  const usedTickets = ticketStats[0]?.used || 0;
 
   res.json({
     event,
     revenue,
-    ticketsSold: tickets.length,
+    ticketsSold,
     usedTickets,
-    checkInRate: tickets.length ? Math.round((usedTickets / tickets.length) * 100) : 0,
-    salesByTier,
+    checkInRate: ticketsSold ? Math.round((usedTickets / ticketsSold) * 100) : 0,
+    salesByTier: tiers.map((tier) => ({
+      name: tier.name,
+      sold: tier.sold,
+      quantity: tier.quantity,
+      revenue: tier.sold * tier.price,
+    })),
     salesOverTime,
-    bookings: bookings.length,
+    bookings: bookingsCount,
   });
 });
 
 export const exportEventCsv = asyncHandler(async (req, res) => {
   const eventId = req.params.id;
-  const bookings = await Booking.find({ eventId, status: 'paid' }).lean();
-  const tickets = await Ticket.find({ eventId }).lean();
+  const [bookings, tickets] = await Promise.all([
+    Booking.find({ eventId, status: 'paid' })
+      .select('guest total currency')
+      .lean(),
+    Ticket.find({ eventId }).select('bookingId status scannedAt').lean(),
+  ]);
 
   const rows = [
     ['Booking ID', 'Guest Name', 'Email', 'Phone', 'Total', 'Currency', 'Ticket Status', 'Scanned At'].join(','),

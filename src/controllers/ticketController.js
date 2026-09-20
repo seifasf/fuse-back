@@ -4,9 +4,18 @@ import { ScanLog } from '../models/ScanLog.js';
 import { verifyQrPayload } from '../services/qr.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { cacheGet, cacheSet, cacheDel } from '../utils/memoryCache.js';
 
 /** Events available for the current gate agent / admin to scan */
 export const listGateEvents = asyncHandler(async (req, res) => {
+  const userKey = req.user.role === 'gate_agent' ? String(req.user._id) : 'admin';
+  const cacheKey = `gate:events:${userKey}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
   const filter = {
     deletedAt: null,
     status: { $in: ['live', 'upcoming'] },
@@ -24,7 +33,10 @@ export const listGateEvents = asyncHandler(async (req, res) => {
     .sort({ startsAt: 1 })
     .lean();
 
-  res.json({ events });
+  const payload = { events };
+  cacheSet(cacheKey, payload, 10_000);
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });
 
 /** Resolve all guest names on a ticket (party QR). */
@@ -258,6 +270,8 @@ export const scanTicket = asyncHandler(async (req, res) => {
     await ticket.save();
 
     await Event.findByIdAndUpdate(ticket.eventId, { $inc: { checkInCount: 1 } });
+    cacheDel('gate:');
+    cacheDel('analytics:');
 
     members = resolveTicketMembers(ticket);
     await ScanLog.create({
@@ -349,6 +363,8 @@ export const admitTicketMembers = asyncHandler(async (req, res) => {
   await ticket.save();
 
   await Event.findByIdAndUpdate(ticket.eventId, { $inc: { checkInCount: toAdmit.length } });
+  cacheDel('gate:');
+  cacheDel('analytics:');
 
   const updated = resolveTicketMembers(ticket);
   const admittedNames = toAdmit.map((m) => m.name);

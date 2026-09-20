@@ -11,6 +11,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
 import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
+import { cacheDel } from '../utils/memoryCache.js';
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider, acceptedTerms } = req.body;
@@ -228,6 +229,8 @@ export const confirmPayment = asyncHandler(async (req, res) => {
 
   await Event.findByIdAndUpdate(eventId, { $inc: { ticketsSold: booking.ticketCount } });
   await booking.save();
+  cacheDel('public:');
+  cacheDel('analytics:');
 
   // Tickets are downloadable in the UI — no email delivery
   res.json({

@@ -80,7 +80,12 @@ export const adminUpdateEventCategories = asyncHandler(async (req, res) => {
 });
 
 export const adminListEvents = asyncHandler(async (req, res) => {
-  const events = await Event.find({ deletedAt: null }).sort({ startsAt: -1 }).lean();
+  const events = await Event.find({ deletedAt: null })
+    .select(
+      'title slug country city venue startsAt endsAt category coverImage status featured visibleOnSite capacity ticketsSold checkInCount createdAt updatedAt'
+    )
+    .sort({ startsAt: -1 })
+    .lean();
   res.json({ events });
 });
 
@@ -383,6 +388,9 @@ export const adminListBookings = asyncHandler(async (req, res) => {
   const skip = (Number(page) - 1) * Number(limit);
   const [bookings, total] = await Promise.all([
     Booking.find(filter)
+      .select(
+        'guest eventId eventSnapshot items ticketCount total currency status paymentProvider createdAt paidAt'
+      )
       .populate('eventId', 'title country')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -725,10 +733,10 @@ export const adminListClients = asyncHandler(async (req, res) => {
 });
 
 export const adminIssueManualTicket = asyncHandler(async (req, res) => {
-  const { eventId, tierId, qty = 1, guest, sendWhatsApp = false, note = '' } = req.body;
+  const { eventId, tierId, qty = 1, guest, members: rawMembers, sendWhatsApp = false, note = '' } = req.body;
 
-  if (!eventId || !tierId || !guest?.name || !guest?.email) {
-    throw new AppError('Event, tier, and guest name/email are required', 400, 'VALIDATION_ERROR');
+  if (!eventId || !tierId || !guest?.email) {
+    throw new AppError('Event, tier, and guest email are required', 400, 'VALIDATION_ERROR');
   }
 
   const quantity = Math.min(Math.max(Number(qty) || 1, 1), 20);
@@ -742,13 +750,36 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   }
 
   const currency = event.country === 'KW' ? 'KWD' : 'EGP';
-  const guestName = String(guest.name).trim();
   const guestEmail = String(guest.email).trim().toLowerCase();
-  const guestPhone = String(guest.phone || '').trim() || '—';
-  const members = Array.from({ length: quantity }, () => ({
-    name: guestName,
-    phone: guestPhone === '—' ? '' : guestPhone,
+
+  let members = [];
+  if (Array.isArray(rawMembers) && rawMembers.length) {
+    members = rawMembers.slice(0, quantity).map((m) => ({
+      name: String(m?.name || '').trim(),
+      phone: String(m?.phone || '').trim(),
+    }));
+  }
+  while (members.length < quantity) {
+    members.push({
+      name: String(guest?.name || '').trim(),
+      phone: String(guest?.phone || '').trim(),
+    });
+  }
+  members = members.map((m) => ({
+    name: m.name || String(guest?.name || '').trim(),
+    phone: m.phone || String(guest?.phone || '').trim(),
   }));
+
+  if (members.some((m) => m.name.length < 2)) {
+    throw new AppError('Enter a name for each guest on this ticket', 400, 'VALIDATION_ERROR');
+  }
+
+  const guestName = String(guest?.name || members[0]?.name || '').trim();
+  const guestPhone = String(guest?.phone || members[0]?.phone || '').trim() || '—';
+  if (!guestName) {
+    throw new AppError('Guest name is required', 400, 'VALIDATION_ERROR');
+  }
+
   const booking = await Booking.create({
     guest: {
       name: guestName,
@@ -837,6 +868,12 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       tierName: t.tierName,
       tierColor: t.tierColor,
       eventTitle: t.eventTitle,
+      holderName: t.holderName,
+      admitCount: t.admitCount || (t.members?.length || 1),
+      members: (t.members || []).map((m) => ({
+        name: m.name,
+        phone: m.phone || '',
+      })),
       qrDataUrl: qrDataUrls[i].qrDataUrl,
     })),
     whatsappSent: Boolean(booking.whatsappSentAt),
@@ -846,25 +883,32 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
 
 /** Door ops: events with guest / check-in counts */
 export const adminDoorEvents = asyncHandler(async (req, res) => {
-  const events = await Event.find({ deletedAt: null }).sort({ startsAt: -1 }).lean();
-  const stats = await Ticket.aggregate([
-    {
-      $group: {
-        _id: '$eventId',
-        totalGuests: { $sum: { $ifNull: ['$admitCount', 1] } },
-        ticketGroups: { $sum: 1 },
-        joined: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'used'] }, { $ifNull: ['$admitCount', 1] }, 0],
+  const [events, stats] = await Promise.all([
+    Event.find({ deletedAt: null })
+      .select(
+        'title slug country city venue startsAt status coverImage capacity ticketsSold checkInCount'
+      )
+      .sort({ startsAt: -1 })
+      .lean(),
+    Ticket.aggregate([
+      {
+        $group: {
+          _id: '$eventId',
+          totalGuests: { $sum: { $ifNull: ['$admitCount', 1] } },
+          ticketGroups: { $sum: 1 },
+          joined: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'used'] }, { $ifNull: ['$admitCount', 1] }, 0],
+            },
           },
-        },
-        pending: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'valid'] }, { $ifNull: ['$admitCount', 1] }, 0],
+          pending: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'valid'] }, { $ifNull: ['$admitCount', 1] }, 0],
+            },
           },
         },
       },
-    },
+    ]),
   ]);
   const byEvent = Object.fromEntries(stats.map((s) => [String(s._id), s]));
 

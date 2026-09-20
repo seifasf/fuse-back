@@ -40,6 +40,20 @@ const allowedOrigins = [
   'http://127.0.0.1:5173',
 ].filter(Boolean);
 
+// Always allow www ↔ apex twin of CLIENT_URL (custom domains often hit both)
+try {
+  if (env.clientUrl) {
+    const u = new URL(env.clientUrl);
+    if (u.hostname.startsWith('www.')) {
+      allowedOrigins.push(`${u.protocol}//${u.hostname.slice(4)}`);
+    } else if (!u.hostname.endsWith('.vercel.app')) {
+      allowedOrigins.push(`${u.protocol}//www.${u.hostname}`);
+    }
+  }
+} catch {
+  /* ignore bad CLIENT_URL */
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -52,10 +66,8 @@ app.use(
         return callback(null, true);
       }
       // Allow Vercel preview deployments when CLIENT_URL is a production Vercel host
-      if (
-        origin.endsWith('.vercel.app') &&
-        (env.clientUrl?.includes('vercel.app') || env.nodeEnv !== 'production')
-      ) {
+      // or a custom production domain (previews still end in .vercel.app)
+      if (origin.endsWith('.vercel.app')) {
         return callback(null, true);
       }
       return callback(new Error('CORS access denied: origin not allowed'));

@@ -6,24 +6,40 @@ import { ContactMessage } from '../models/ContactMessage.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
+import { cacheGet, cacheSet } from '../utils/memoryCache.js';
 
 const notDeleted = { deletedAt: null };
 const publicVisible = { ...notDeleted, visibleOnSite: { $ne: false } };
 
+let cachedSiteTerms = { value: null, expires: 0 };
+
 async function resolveTerms(eventTerms) {
   const custom = typeof eventTerms === 'string' ? eventTerms.trim() : '';
   if (custom) return custom;
+  if (cachedSiteTerms.expires > Date.now() && cachedSiteTerms.value != null) {
+    return cachedSiteTerms.value;
+  }
   const content = await SiteContent.findOne({ key: 'home' }).select('termsAndConditions').lean();
-  const siteTerms = content?.termsAndConditions?.trim();
-  return siteTerms || DEFAULT_TERMS_AND_CONDITIONS;
+  const siteTerms = content?.termsAndConditions?.trim() || DEFAULT_TERMS_AND_CONDITIONS;
+  cachedSiteTerms = { value: siteTerms, expires: Date.now() + 60_000 };
+  return siteTerms;
 }
 
+/** Card lists — keep payloads small (no gallery / images arrays). */
 const EVENT_CARD_FIELDS =
-  'title slug country city venue startsAt endsAt category coverImage images status featured capacity gallery';
+  'title slug country city venue startsAt endsAt category coverImage status featured capacity';
 const CHARACTER_CARD_FIELDS = 'name slug image tags country featured sortOrder';
 
 export const listEvents = asyncHandler(async (req, res) => {
   const { country, status, featured, category, limit = 20, page = 1 } = req.query;
+  const cacheKey = `public:events:${country || ''}:${status || ''}:${featured || ''}:${category || ''}:${page}:${limit}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
   const filter = { ...publicVisible };
   if (country) filter.country = country;
   if (status) filter.status = status;
@@ -41,12 +57,23 @@ export const listEvents = asyncHandler(async (req, res) => {
     Event.countDocuments(filter),
   ]);
 
+  const payload = { events, total, page: Number(page), limit: Number(limit) };
+  cacheSet(cacheKey, payload, 20_000);
   res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
-  res.json({ events, total, page: Number(page), limit: Number(limit) });
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });
 
 export const getEvent = asyncHandler(async (req, res) => {
   const { slug } = req.params;
+  const cacheKey = `public:event:${slug}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
   const isObjectId = /^[a-f\d]{24}$/i.test(slug);
   const event = isObjectId
     ? await Event.findOne({ _id: slug, ...publicVisible }).lean()
@@ -66,11 +93,23 @@ export const getEvent = asyncHandler(async (req, res) => {
     resolveTerms(event.termsAndConditions),
   ]);
 
-  res.json({ event, tiers, characters, terms });
+  const payload = { event, tiers, characters, terms };
+  cacheSet(cacheKey, payload, 12_000);
+  res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });
 
 export const listCharacters = asyncHandler(async (req, res) => {
   const { featured, limit = 20 } = req.query;
+  const cacheKey = `public:characters:${featured || ''}:${limit}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
   const filter = { ...notDeleted };
   if (featured === 'true') filter.featured = true;
 
@@ -79,12 +118,24 @@ export const listCharacters = asyncHandler(async (req, res) => {
     .sort({ sortOrder: 1, name: 1 })
     .limit(Number(limit))
     .lean();
+  const payload = { characters };
+  cacheSet(cacheKey, payload, 30_000);
   res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
-  res.json({ characters });
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });
 
 export const getCharacter = asyncHandler(async (req, res) => {
-  const character = await Character.findOne({ slug: req.params.slug, ...notDeleted }).lean();
+  const { slug } = req.params;
+  const cacheKey = `public:character:${slug}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
+
+  const character = await Character.findOne({ slug, ...notDeleted }).lean();
   if (!character) return res.status(404).json({ code: 'NOT_FOUND', message: 'Character not found' });
 
   const events = character.relatedEventIds?.length
@@ -93,7 +144,11 @@ export const getCharacter = asyncHandler(async (req, res) => {
         .lean()
     : [];
 
-  res.json({ character, events });
+  const payload = { character, events };
+  cacheSet(cacheKey, payload, 30_000);
+  res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });
 
 export const submitContactMessage = asyncHandler(async (req, res) => {
@@ -131,6 +186,13 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
 
 export const getHomeContent = asyncHandler(async (req, res) => {
   const { country } = req.query;
+  const cacheKey = `public:home:${country || 'ALL'}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
+    res.set('X-Cache', 'HIT');
+    return res.json(cached);
+  }
 
   const eventFilter = { status: 'upcoming', ...publicVisible };
   const pastFilter = { status: 'past', ...publicVisible };
@@ -141,7 +203,7 @@ export const getHomeContent = asyncHandler(async (req, res) => {
     characterFilter.$or = [{ country }, { country: { $exists: false } }, { country: null }];
   }
 
-  const [content, featuredEvent, upcomingEvents, characters, pastEvents] = await Promise.all([
+  let [content, featuredEvent, upcomingEvents, characters, pastEvents] = await Promise.all([
     SiteContent.findOne({ key: 'home' })
       .select('key about contact stats banners sections termsAndConditions')
       .lean(),
@@ -158,8 +220,22 @@ export const getHomeContent = asyncHandler(async (req, res) => {
     Event.find(pastFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: -1 }).limit(12).lean(),
   ]);
 
-  res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
-  res.json({
+  // Country filter can empty the homepage — fall back to all markets so featured still shows
+  if (country && !featuredEvent && !(upcomingEvents && upcomingEvents.length)) {
+    const fallbackFilter = { status: 'upcoming', ...publicVisible };
+    [featuredEvent, upcomingEvents] = await Promise.all([
+      Event.findOne({ ...fallbackFilter, featured: true })
+        .select(EVENT_CARD_FIELDS)
+        .sort({ startsAt: 1 })
+        .lean(),
+      Event.find(fallbackFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: 1 }).limit(16).lean(),
+    ]);
+  }
+  if (country && !featuredEvent && upcomingEvents?.length) {
+    featuredEvent = upcomingEvents.find((e) => e.featured) || upcomingEvents[0] || null;
+  }
+
+  const payload = {
     content: content
       ? {
           ...content,
@@ -175,5 +251,10 @@ export const getHomeContent = asyncHandler(async (req, res) => {
     upcomingEvents,
     characters,
     pastEvents,
-  });
+  };
+
+  cacheSet(cacheKey, payload, 15_000);
+  res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
+  res.set('X-Cache', 'MISS');
+  res.json(payload);
 });

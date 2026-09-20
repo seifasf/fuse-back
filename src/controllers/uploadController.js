@@ -3,6 +3,12 @@ import { Media } from '../models/Media.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
+import {
+  getCachedMedia,
+  optimizeUploadBuffer,
+  resizeMediaBuffer,
+  setCachedMedia,
+} from '../utils/imageOptimize.js';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const MAX_BYTES = 5 * 1024 * 1024; // 5MB
@@ -43,11 +49,13 @@ function publicBase(req) {
 export const uploadImage = asyncHandler(async (req, res) => {
   if (!req.file) throw new AppError('No image file provided', 400, 'VALIDATION_ERROR');
 
+  const optimized = await optimizeUploadBuffer(req.file.buffer, req.file.mimetype);
+
   const media = await Media.create({
     filename: req.file.originalname?.slice(0, 200) || 'upload.jpg',
-    mimeType: req.file.mimetype,
-    size: req.file.size,
-    data: req.file.buffer,
+    mimeType: optimized.mimeType,
+    size: optimized.buffer.length,
+    data: optimized.buffer,
     uploadedBy: req.user?._id,
   });
 
@@ -62,17 +70,44 @@ export const uploadImage = asyncHandler(async (req, res) => {
   });
 });
 
-/** Public: serve image bytes for <img src> */
+/** Public: serve image bytes for <img src> — supports ?w=900 for mobile-sized WebP */
 export const getMedia = asyncHandler(async (req, res) => {
-  const media = await Media.findById(req.params.id);
+  const widthRaw = req.query.w;
+  const width = widthRaw ? Math.min(2000, Math.max(80, parseInt(String(widthRaw), 10) || 0)) : 0;
+  const cacheHit = getCachedMedia(req.params.id, width || 'full');
+  if (cacheHit) {
+    res.set({
+      'Content-Type': cacheHit.mimeType,
+      'Content-Length': String(cacheHit.buffer.length),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Image-Cache': 'HIT',
+    });
+    return res.send(cacheHit.buffer);
+  }
+
+  const media = await Media.findById(req.params.id).select('mimeType size data').lean();
   if (!media) throw new AppError('Image not found', 404, 'NOT_FOUND');
 
+  let buffer = Buffer.isBuffer(media.data)
+    ? media.data
+    : Buffer.from(media.data?.buffer || media.data);
+  let mimeType = media.mimeType;
+
+  if (width) {
+    const resized = await resizeMediaBuffer(buffer, mimeType, width);
+    buffer = resized.buffer;
+    mimeType = resized.mimeType;
+  }
+
+  setCachedMedia(req.params.id, width || 'full', { buffer, mimeType });
+
   res.set({
-    'Content-Type': media.mimeType,
-    'Content-Length': String(media.size),
+    'Content-Type': mimeType,
+    'Content-Length': String(buffer.length),
     'Cache-Control': 'public, max-age=31536000, immutable',
+    'X-Image-Cache': 'MISS',
   });
-  res.send(media.data);
+  res.send(buffer);
 });
 
 export const deleteMedia = asyncHandler(async (req, res) => {

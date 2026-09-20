@@ -86,5 +86,8 @@ eventSchema.index({ featured: 1, status: 1, startsAt: 1 });
 /** Soft-delete filter */
 eventSchema.index({ deletedAt: 1, status: 1 });
 eventSchema.index({ category: 1, status: 1 });
+/** Public site visibility */
+eventSchema.index({ deletedAt: 1, visibleOnSite: 1, status: 1, startsAt: 1 });
+eventSchema.index({ deletedAt: 1, visibleOnSite: 1, country: 1, status: 1, startsAt: 1 });
 
 export const Event = mongoose.model('Event', eventSchema);

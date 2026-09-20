@@ -15,9 +15,24 @@ import {
 } from '../controllers/adminController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { uploadMiddleware, uploadImage, deleteMedia } from '../controllers/uploadController.js';
+import { cacheDel } from '../utils/memoryCache.js';
 
 const router = Router();
 router.use(auth, requireRole('admin'));
+
+/** Invalidate public/analytics caches after admin writes */
+router.use((req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode < 400) {
+      cacheDel('public:');
+      cacheDel('analytics:');
+    }
+    return originalJson(body);
+  };
+  next();
+});
 
 // Uploads
 router.post('/upload', uploadMiddleware, uploadImage);
