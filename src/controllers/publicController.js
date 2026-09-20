@@ -189,7 +189,7 @@ export const getHomeContent = asyncHandler(async (req, res) => {
   const cacheKey = `public:home:${country || 'ALL'}`;
   const cached = cacheGet(cacheKey);
   if (cached) {
-    res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
+    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
     res.set('X-Cache', 'HIT');
     return res.json(cached);
   }
@@ -310,8 +310,8 @@ export const getHomeContent = asyncHandler(async (req, res) => {
     pastEvents: needPast ? pastEvents : [],
   };
 
-  cacheSet(cacheKey, payload, 10_000);
-  res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
+  cacheSet(cacheKey, payload, 60_000);
+  res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
   res.set('X-Cache', 'MISS');
   res.json(payload);
 });
