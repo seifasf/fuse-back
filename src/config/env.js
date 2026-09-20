@@ -33,7 +33,7 @@ function cleanUrl(value) {
 }
 
 /**
- * jsonwebtoken + `ms`: a bare numeric string like "7" is NOT "7 days" —
+ * jsonwebtoken + `ms`: a bare numeric string like "7" is NOT "7 days"  - 
  * it yields a 0s lifetime (iat === exp), so every admin API 401s after login.
  * Accept "7d" / "12h" / "3600" (seconds as number-like with unit or large secs).
  */
@@ -58,7 +58,7 @@ function normalizeJwtExpiresIn(raw) {
     return v;
   }
 
-  console.warn(`[fuse] Invalid JWT_EXPIRES_IN="${v}" — using ${fallback}`);
+  console.warn(`[fuse] Invalid JWT_EXPIRES_IN="${v}"  -  using ${fallback}`);
   return fallback;
 }
 
@@ -111,6 +111,6 @@ if (isProd) {
 
 if (isProd && !env.apiPublicUrl) {
   console.warn(
-    'API_PUBLIC_URL is not set — uploaded media URLs will use the request Host header (usually fine on Render).'
+    'API_PUBLIC_URL is not set  -  uploaded media URLs will use the request Host header (usually fine on Render).'
   );
 }

@@ -25,7 +25,7 @@ async function resolveTerms(eventTerms) {
   return siteTerms;
 }
 
-/** Card lists — keep payloads small (no gallery / images arrays). */
+/** Card lists  -  keep payloads small (no gallery / images arrays). */
 const EVENT_CARD_FIELDS =
   'title slug country city venue startsAt endsAt category coverImage status featured capacity';
 const CHARACTER_CARD_FIELDS = 'name slug image tags country featured sortOrder';
@@ -180,7 +180,7 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
   res.status(201).json({
     ok: true,
     id: doc._id,
-    message: 'Message received — we will get back to you soon.',
+    message: 'Message received  -  we will get back to you soon.',
   });
 });
 
@@ -270,7 +270,7 @@ export const getHomeContent = asyncHandler(async (req, res) => {
   }
   await Promise.all(tasks);
 
-  // Country filter can empty the homepage — fall back to all markets so featured still shows
+  // Country filter can empty the homepage  -  fall back to all markets so featured still shows
   if (needHeroOrUpcoming && country && !featuredEvent && !(upcomingEvents && upcomingEvents.length)) {
     const fallbackFilter = { status: 'upcoming', ...publicVisible };
     [featuredEvent, upcomingEvents] = await Promise.all([

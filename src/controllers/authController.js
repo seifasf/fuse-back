@@ -105,7 +105,7 @@ export const login = asyncHandler(async (req, res) => {
   res.json({ user: publicUser(user), token });
 });
 
-/** Kept for unlock UI compatibility — no extra secret required. */
+/** Kept for unlock UI compatibility  -  no extra secret required. */
 export const verifyAdminKey = asyncHandler(async (_req, res) => {
   res.json({ verified: true });
 });

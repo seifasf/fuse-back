@@ -1,6 +1,6 @@
 import rateLimit from 'express-rate-limit';
 
-/** Light brute-force guard — does not slow successful logins. */
+/** Light brute-force guard  -  does not slow successful logins. */
 export const loginLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 60,
@@ -36,7 +36,7 @@ export const registerLimiter = rateLimit({
   },
 });
 
-/** Public contact form — stop spam floods without blocking real guests. */
+/** Public contact form  -  stop spam floods without blocking real guests. */
 export const contactLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 8,

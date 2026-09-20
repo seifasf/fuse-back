@@ -28,7 +28,7 @@ const userSchema = new mongoose.Schema(
       default: 'client',
     },
     country: { type: String, enum: COUNTRY_OR_ALL, default: 'ALL' },
-    /** Gate agents only — empty = all events (admin override), otherwise restricted */
+    /** Gate agents only  -  empty = all events (admin override), otherwise restricted */
     assignedEventIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Event' }],
     isActive: { type: Boolean, default: true },
     failedLoginAttempts: { type: Number, default: 0 },

@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 /**
  * Uploaded website images stored in Atlas.
- * Avoids Render's ephemeral disk — files survive restarts/deploys.
+ * Avoids Render's ephemeral disk  -  files survive restarts/deploys.
  */
 const mediaSchema = new mongoose.Schema(
   {

@@ -20,7 +20,7 @@ export function errorHandler(err, req, res, next) {
   } else if (err?.code === 11000) {
     statusCode = 409;
     code = 'CONFLICT';
-    message = 'Duplicate value — already exists';
+    message = 'Duplicate value  -  already exists';
   }
 
   if (process.env.NODE_ENV !== 'production') {

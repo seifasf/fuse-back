@@ -4,12 +4,12 @@ import { CURRENCIES, BOOKING_STATUSES, PAYMENT_PROVIDERS } from './constants.js'
 const bookingItemSchema = new mongoose.Schema(
   {
     tierId: { type: mongoose.Schema.Types.ObjectId, ref: 'TicketTier', required: true },
-    /** Snapshot at purchase time — survives tier renames/price changes */
+    /** Snapshot at purchase time  -  survives tier renames/price changes */
     tierName: { type: String, required: true },
     qty: { type: Number, required: true, min: 1, max: 50 },
     unitPrice: { type: Number, required: true, min: 0 },
     tierColor: { type: String, default: '#64748B', maxlength: 7 },
-    /** One entry per admit — length must match qty (name + phone for each person). */
+    /** One entry per admit  -  length must match qty (name + phone for each person). */
     members: {
       type: [
         {
@@ -43,7 +43,7 @@ const bookingSchema = new mongoose.Schema(
       ref: 'Event',
       required: true,
     },
-    /** Extended reference — avoid join on admin booking lists */
+    /** Extended reference  -  avoid join on admin booking lists */
     eventSnapshot: {
       title: { type: String, default: '' },
       country: { type: String, default: '' },
@@ -52,7 +52,7 @@ const bookingSchema = new mongoose.Schema(
     },
     items: {
       type: [bookingItemSchema],
-      validate: [(arr) => arr.length >= 1 && arr.length <= 10, '1–10 line items required'],
+      validate: [(arr) => arr.length >= 1 && arr.length <= 10, '1-10 line items required'],
     },
     ticketCount: { type: Number, required: true, min: 1 },
     total: { type: Number, required: true, min: 0 },

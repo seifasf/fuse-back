@@ -27,7 +27,7 @@ const DEFAULT_SECTIONS = [
 ];
 
 /**
- * Bootstrap only — staff accounts + empty site content. No demo events.
+ * Bootstrap only  -  staff accounts + empty site content. No demo events.
  */
 async function seed() {
   await connectDB();
@@ -78,7 +78,7 @@ async function seed() {
   await SiteContent.create({
     key: 'home',
     about:
-      'FUSE is a Kuwait events company that opened in Egypt — curating unforgettable nights with world-class production, bold lineups, and a community that shows up for the music.',
+      'FUSE is a Kuwait events company that opened in Egypt  -  curating unforgettable nights with world-class production, bold lineups, and a community that shows up for the music.',
     termsAndConditions: DEFAULT_TERMS_AND_CONDITIONS,
     contact: {
       email: 'fuse.contact@fuseevents.net',
@@ -103,7 +103,7 @@ async function seed() {
     ],
   });
 
-  console.log('Seed complete — no events (create them in admin)');
+  console.log('Seed complete  -  no events (create them in admin)');
   console.log('Admin: admin@fuse.events / admin123');
   console.log('Seif:  seif / seif  (gate agent)');
   console.log('Agent: agent@fuse.events / agent123');

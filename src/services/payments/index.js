@@ -15,7 +15,7 @@ export const paymentProviders = {
   paymob: {
     name: 'paymob',
     async createPayment({ booking, returnUrl }) {
-      // Stub — wire live Paymob keys in production
+      // Stub  -  wire live Paymob keys in production
       return {
         provider: 'paymob',
         paymentUrl: `${returnUrl}?bookingId=${booking._id}&status=success&provider=paymob`,

@@ -232,7 +232,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   cacheDel('public:');
   cacheDel('analytics:');
 
-  // Tickets are downloadable in the UI — no email delivery
+  // Tickets are downloadable in the UI  -  no email delivery
   res.json({
     booking,
     tickets: await formatTickets(tickets),

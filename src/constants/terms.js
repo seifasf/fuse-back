@@ -1,4 +1,4 @@
-/** Default Fuse Events terms — editable in admin Site Content; events can override. */
+/** Default Fuse Events terms  -  editable in admin Site Content; events can override. */
 export const DEFAULT_TERMS_AND_CONDITIONS = `Terms & Conditions
 
 1. Event Information

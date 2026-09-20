@@ -294,7 +294,7 @@ export const scanTicket = asyncHandler(async (req, res) => {
     });
   }
 
-  // Party ticket with people still to enter — agent chooses who
+  // Party ticket with people still to enter  -  agent chooses who
   await ticket.save();
   const enteredNames = members.filter((m) => m.checkedIn).map((m) => m.name);
   const leftNames = remaining.map((m) => m.name);

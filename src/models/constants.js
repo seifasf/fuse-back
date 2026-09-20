@@ -1,4 +1,4 @@
-/** Shared domain enums ù single source of truth for all models */
+/** Shared domain enums  single source of truth for all models */
 
 export const COUNTRIES = ['EG', 'KW'];
 export const COUNTRY_OR_ALL = ['EG', 'KW', 'ALL'];

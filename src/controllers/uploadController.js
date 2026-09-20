@@ -70,7 +70,7 @@ export const uploadImage = asyncHandler(async (req, res) => {
   });
 });
 
-/** Public: serve image bytes for <img src> — supports ?w=900 for mobile-sized WebP */
+/** Public: serve image bytes for <img src>  -  supports ?w=900 for mobile-sized WebP */
 export const getMedia = asyncHandler(async (req, res) => {
   const widthRaw = req.query.w;
   const width = widthRaw ? Math.min(2000, Math.max(80, parseInt(String(widthRaw), 10) || 0)) : 0;

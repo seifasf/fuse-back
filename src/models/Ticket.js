@@ -26,7 +26,7 @@ const ticketSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    /** HMAC-signed QR payload — unique, never reused */
+    /** HMAC-signed QR payload  -  unique, never reused */
     qrPayload: { type: String, required: true, unique: true },
     status: {
       type: String,

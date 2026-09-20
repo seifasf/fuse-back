@@ -480,7 +480,7 @@ export const adminGetContent = asyncHandler(async (req, res) => {
 
 export const adminUpdateContent = asyncHandler(async (req, res) => {
   const body = req.body || {};
-  // Whitelist only editable fields — never let a content PUT wipe `sections`
+  // Whitelist only editable fields  -  never let a content PUT wipe `sections`
   // (sections are managed by /admin/sections) or clobber metadata.
   const $set = { key: 'home' };
 
@@ -782,7 +782,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   }
 
   const guestName = String(guest?.name || members[0]?.name || '').trim();
-  const guestPhone = String(guest?.phone || members[0]?.phone || '').trim() || '—';
+  const guestPhone = String(guest?.phone || members[0]?.phone || '').trim() || ' - ';
   if (!guestName) {
     throw new AppError('Guest name is required', 400, 'VALIDATION_ERROR');
   }
@@ -831,7 +831,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
     qrPayload: `pending_${booking._id}_${Date.now()}`,
     holderName: guestName,
     holderEmail: guestEmail,
-    holderPhone: guestPhone === '—' ? '' : guestPhone,
+    holderPhone: guestPhone === ' - ' ? '' : guestPhone,
     members,
     admitCount: quantity,
     tierName: tier.name,

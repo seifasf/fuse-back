@@ -58,7 +58,7 @@ const eventSchema = new mongoose.Schema(
     featured: { type: Boolean, default: false },
     /** When false, event is hidden from the public website (admin can still manage it). */
     visibleOnSite: { type: Boolean, default: true },
-    /** Cached counters — updated on booking confirm / gate scan */
+    /** Cached counters  -  updated on booking confirm / gate scan */
     ticketsSold: { type: Number, default: 0, min: 0 },
     checkInCount: { type: Number, default: 0, min: 0 },
     attendanceCount: { type: Number, default: 0, min: 0 },
