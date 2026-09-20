@@ -17,6 +17,7 @@ import bcrypt from 'bcryptjs';
 import { generateTicketCode } from '../utils/ticketCode.js';
 import { generateTicketQrDataUrl, getQrPayload } from '../services/ticketQr.js';
 import { sendTicketWhatsApp } from '../services/whatsapp.js';
+import { cacheDel } from '../utils/memoryCache.js';
 
 /* ??? Events ??????????????????????????????????????????????? */
 
@@ -526,11 +527,17 @@ export const adminGetSections = asyncHandler(async (req, res) => {
 
 export const adminUpdateSections = asyncHandler(async (req, res) => {
   const { sections } = req.body;
+  // Normalize visible to real booleans so the public API never gets string "false"
+  const normalized = (Array.isArray(sections) ? sections : []).map((s) => ({
+    ...s,
+    visible: s.visible !== false && s.visible !== 'false' && s.visible !== 0,
+  }));
   const content = await SiteContent.findOneAndUpdate(
     { key: 'home' },
-    { $set: { sections, key: 'home' } },
+    { $set: { sections: normalized, key: 'home' } },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
+  cacheDel('public:');
   res.json({ sections: content.sections });
 });
 

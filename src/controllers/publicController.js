@@ -189,10 +189,26 @@ export const getHomeContent = asyncHandler(async (req, res) => {
   const cacheKey = `public:home:${country || 'ALL'}`;
   const cached = cacheGet(cacheKey);
   if (cached) {
-    res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
+    res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
     res.set('X-Cache', 'HIT');
     return res.json(cached);
   }
+
+  const content = await SiteContent.findOne({ key: 'home' })
+    .select('key about contact stats banners sections termsAndConditions')
+    .lean();
+
+  const rawSections = Array.isArray(content?.sections) ? content.sections : [];
+  const sectionVisible = (type) => {
+    const s = rawSections.find((x) => x.type === type);
+    // Missing section → treat as visible (legacy); explicit false → hidden
+    if (!s) return true;
+    return s.visible !== false && s.visible !== 'false';
+  };
+
+  const needHeroOrUpcoming = sectionVisible('hero') || sectionVisible('upcoming_events');
+  const needPast = sectionVisible('past_events');
+  const needCharacters = sectionVisible('characters');
 
   const eventFilter = { status: 'upcoming', ...publicVisible };
   const pastFilter = { status: 'past', ...publicVisible };
@@ -203,25 +219,59 @@ export const getHomeContent = asyncHandler(async (req, res) => {
     characterFilter.$or = [{ country }, { country: { $exists: false } }, { country: null }];
   }
 
-  let [content, featuredEvent, upcomingEvents, characters, pastEvents] = await Promise.all([
-    SiteContent.findOne({ key: 'home' })
-      .select('key about contact stats banners sections termsAndConditions')
-      .lean(),
-    Event.findOne({ ...eventFilter, featured: true })
-      .select(EVENT_CARD_FIELDS)
-      .sort({ startsAt: 1 })
-      .lean(),
-    Event.find(eventFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: 1 }).limit(16).lean(),
-    Character.find(characterFilter)
-      .select(CHARACTER_CARD_FIELDS)
-      .sort({ sortOrder: 1 })
-      .limit(20)
-      .lean(),
-    Event.find(pastFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: -1 }).limit(12).lean(),
-  ]);
+  let featuredEvent = null;
+  let upcomingEvents = [];
+  let characters = [];
+  let pastEvents = [];
+
+  const tasks = [];
+  if (needHeroOrUpcoming) {
+    tasks.push(
+      Event.findOne({ ...eventFilter, featured: true })
+        .select(EVENT_CARD_FIELDS)
+        .sort({ startsAt: 1 })
+        .lean()
+        .then((doc) => {
+          featuredEvent = doc;
+        }),
+      Event.find(eventFilter)
+        .select(EVENT_CARD_FIELDS)
+        .sort({ startsAt: 1 })
+        .limit(16)
+        .lean()
+        .then((docs) => {
+          upcomingEvents = docs;
+        })
+    );
+  }
+  if (needCharacters) {
+    tasks.push(
+      Character.find(characterFilter)
+        .select(CHARACTER_CARD_FIELDS)
+        .sort({ sortOrder: 1 })
+        .limit(20)
+        .lean()
+        .then((docs) => {
+          characters = docs;
+        })
+    );
+  }
+  if (needPast) {
+    tasks.push(
+      Event.find(pastFilter)
+        .select(EVENT_CARD_FIELDS)
+        .sort({ startsAt: -1 })
+        .limit(12)
+        .lean()
+        .then((docs) => {
+          pastEvents = docs;
+        })
+    );
+  }
+  await Promise.all(tasks);
 
   // Country filter can empty the homepage — fall back to all markets so featured still shows
-  if (country && !featuredEvent && !(upcomingEvents && upcomingEvents.length)) {
+  if (needHeroOrUpcoming && country && !featuredEvent && !(upcomingEvents && upcomingEvents.length)) {
     const fallbackFilter = { status: 'upcoming', ...publicVisible };
     [featuredEvent, upcomingEvents] = await Promise.all([
       Event.findOne({ ...fallbackFilter, featured: true })
@@ -231,14 +281,21 @@ export const getHomeContent = asyncHandler(async (req, res) => {
       Event.find(fallbackFilter).select(EVENT_CARD_FIELDS).sort({ startsAt: 1 }).limit(16).lean(),
     ]);
   }
-  if (country && !featuredEvent && upcomingEvents?.length) {
+  if (needHeroOrUpcoming && country && !featuredEvent && upcomingEvents?.length) {
     featuredEvent = upcomingEvents.find((e) => e.featured) || upcomingEvents[0] || null;
   }
+
+  // Normalize section visibility to real booleans for the public site
+  const sections = rawSections.map((s) => ({
+    ...s,
+    visible: s.visible !== false && s.visible !== 'false',
+  }));
 
   const payload = {
     content: content
       ? {
           ...content,
+          sections,
           termsAndConditions:
             content.termsAndConditions?.trim() || DEFAULT_TERMS_AND_CONDITIONS,
         }
@@ -247,14 +304,14 @@ export const getHomeContent = asyncHandler(async (req, res) => {
           sections: [],
           termsAndConditions: DEFAULT_TERMS_AND_CONDITIONS,
         },
-    featuredEvent,
-    upcomingEvents,
-    characters,
-    pastEvents,
+    featuredEvent: needHeroOrUpcoming ? featuredEvent : null,
+    upcomingEvents: sectionVisible('upcoming_events') ? upcomingEvents : [],
+    characters: needCharacters ? characters : [],
+    pastEvents: needPast ? pastEvents : [],
   };
 
-  cacheSet(cacheKey, payload, 15_000);
-  res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
+  cacheSet(cacheKey, payload, 10_000);
+  res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
   res.set('X-Cache', 'MISS');
   res.json(payload);
 });
