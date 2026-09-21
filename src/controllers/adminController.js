@@ -17,6 +17,7 @@ import bcrypt from 'bcryptjs';
 import { generateTicketCode } from '../utils/ticketCode.js';
 import { generateTicketQrDataUrl, getQrPayload } from '../services/ticketQr.js';
 import { sendTicketWhatsApp } from '../services/whatsapp.js';
+import { sendTicketsEmail } from '../services/email/index.js';
 import { cacheDel } from '../utils/memoryCache.js';
 
 /* ??? Events ??????????????????????????????????????????????? */
@@ -740,7 +741,16 @@ export const adminListClients = asyncHandler(async (req, res) => {
 });
 
 export const adminIssueManualTicket = asyncHandler(async (req, res) => {
-  const { eventId, tierId, qty = 1, guest, members: rawMembers, sendWhatsApp = false, note = '' } = req.body;
+  const {
+    eventId,
+    tierId,
+    qty = 1,
+    guest,
+    members: rawMembers,
+    sendWhatsApp = false,
+    sendEmail = true,
+    note = '',
+  } = req.body;
 
   if (!eventId || !tierId || !guest?.email) {
     throw new AppError('Event, tier, and guest email are required', 400, 'VALIDATION_ERROR');
@@ -843,7 +853,8 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   ticket.qrPayload = qrPayload;
   await ticket.save();
 
-  const qrDataUrl = await generateTicketQrDataUrl(ticket._id, booking._id, event._id);
+  // Encode the SAME stored payload (must match checkout tickets)
+  const qrDataUrl = await generateTicketQrDataUrl(ticket._id, booking._id, event._id, qrPayload);
   tickets.push(ticket);
   qrDataUrls.push({ ticketId: ticket._id, code: ticket.code, qrDataUrl });
 
@@ -861,6 +872,23 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       booking.whatsappSentAt = new Date();
     } catch (err) {
       console.error('Manual ticket WhatsApp failed:', err.message);
+    }
+  }
+
+  let emailSent = false;
+  if (sendEmail !== false) {
+    const mail = await sendTicketsEmail({
+      toEmail: guestEmail,
+      toName: guestName,
+      eventTitle: event.title,
+      venue: event.venue,
+      startsAt: event.startsAt,
+      tickets,
+      complimentary: true,
+    });
+    if (mail.sent) {
+      booking.emailSentAt = new Date();
+      emailSent = true;
     }
   }
 
@@ -884,7 +912,8 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       qrDataUrl: qrDataUrls[i].qrDataUrl,
     })),
     whatsappSent: Boolean(booking.whatsappSentAt),
-    delivery: 'download',
+    emailSent,
+    delivery: emailSent ? 'email+download' : 'download',
   });
 });
 

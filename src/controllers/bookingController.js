@@ -12,6 +12,7 @@ import { env } from '../config/env.js';
 import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import { cacheDel } from '../utils/memoryCache.js';
+import { sendTicketsEmail, isEmailConfigured } from '../services/email/index.js';
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider, acceptedTerms } = req.body;
@@ -166,11 +167,34 @@ export const confirmPayment = asyncHandler(async (req, res) => {
 
   if (booking.status === 'paid') {
     const existing = await Ticket.find({ bookingId });
+    const formatted = await formatTickets(existing);
+
+    // Retry email if it never went out (e.g. Brevo was added later)
+    let emailSent = Boolean(booking.emailSentAt);
+    if (!emailSent && isEmailConfigured() && existing.length) {
+      const eventDoc = booking.eventId;
+      const mail = await sendTicketsEmail({
+        toEmail: booking.guest.email,
+        toName: booking.guest.name,
+        eventTitle: existing[0]?.eventTitle || eventDoc?.title || booking.eventSnapshot?.title,
+        venue: eventDoc?.venue || booking.eventSnapshot?.venue,
+        startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
+        tickets: existing,
+        complimentary: booking.paymentProvider === 'manual',
+      });
+      if (mail.sent) {
+        booking.emailSentAt = new Date();
+        await booking.save();
+        emailSent = true;
+      }
+    }
+
     return res.json({
       booking,
-      tickets: await formatTickets(existing),
+      tickets: formatted,
       alreadyPaid: true,
-      delivery: 'download',
+      delivery: emailSent ? 'email+download' : 'download',
+      emailSent,
     });
   }
 
@@ -232,11 +256,29 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   cacheDel('public:');
   cacheDel('analytics:');
 
-  // Tickets are downloadable in the UI  -  no email delivery
+  let emailSent = false;
+  const mail = await sendTicketsEmail({
+    toEmail: booking.guest.email,
+    toName: booking.guest.name,
+    eventTitle,
+    venue: eventDoc?.venue || booking.eventSnapshot?.venue,
+    startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
+    tickets,
+    complimentary: false,
+  });
+  if (mail.sent) {
+    booking.emailSentAt = new Date();
+    await booking.save();
+    emailSent = true;
+  } else if (mail.mock) {
+    console.log('[email] Booking confirmed — Brevo not configured yet (mock).');
+  }
+
   res.json({
     booking,
     tickets: await formatTickets(tickets),
-    delivery: 'download',
+    delivery: emailSent ? 'email+download' : 'download',
+    emailSent,
   });
 });
 

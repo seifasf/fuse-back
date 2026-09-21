@@ -18,7 +18,8 @@ export const listGateEvents = asyncHandler(async (req, res) => {
 
   const filter = {
     deletedAt: null,
-    status: { $in: ['live', 'upcoming'] },
+    // Include draft: admin can issue manual tickets for draft events while testing
+    status: { $in: ['live', 'upcoming', 'draft'] },
   };
 
   if (req.user.role === 'gate_agent') {
@@ -145,23 +146,40 @@ async function findTicketForScan(req) {
   }
 
   let ticket = null;
+  const rawPayload = typeof qrPayload === 'string' ? qrPayload.trim() : '';
+  const rawCode = typeof code === 'string' ? code.trim().toUpperCase() : '';
 
   if (ticketId) {
     ticket = await Ticket.findById(ticketId);
-  } else if (qrPayload) {
-    const decoded = verifyQrPayload(qrPayload);
-    if (!decoded) {
-      await ScanLog.create({
-        eventId,
-        agentId: req.user._id,
-        result: 'invalid',
-        message: 'Invalid QR signature',
-      }).catch(() => {});
-      throw new AppError('Invalid QR code', 400, 'INVALID_QR');
+  } else if (rawPayload) {
+    // Printed / USB scanners sometimes wrap the code; prefer FUSE- code when present
+    const embeddedCode = rawPayload.match(/FUSE-[A-Z0-9]+/i)?.[0];
+    if (embeddedCode && /^FUSE-[A-Z0-9]+$/i.test(rawPayload)) {
+      ticket = await Ticket.findOne({ code: embeddedCode.toUpperCase() });
+    } else {
+      const decoded = verifyQrPayload(rawPayload);
+      if (decoded?.ticketId) {
+        ticket = await Ticket.findById(decoded.ticketId);
+      }
+      // Same signed string as stored on the ticket (manual + checkout)
+      if (!ticket) {
+        ticket = await Ticket.findOne({ qrPayload: rawPayload });
+      }
+      if (!ticket && embeddedCode) {
+        ticket = await Ticket.findOne({ code: embeddedCode.toUpperCase() });
+      }
+      if (!ticket) {
+        await ScanLog.create({
+          eventId,
+          agentId: req.user._id,
+          result: 'invalid',
+          message: 'Invalid QR signature',
+        }).catch(() => {});
+        throw new AppError('Invalid QR code', 400, 'INVALID_QR');
+      }
     }
-    ticket = await Ticket.findById(decoded.ticketId);
-  } else if (code) {
-    ticket = await Ticket.findOne({ code: String(code).trim().toUpperCase() });
+  } else if (rawCode) {
+    ticket = await Ticket.findOne({ code: rawCode });
   } else {
     throw new AppError('QR payload, ticket code, or ticket id required', 400, 'VALIDATION_ERROR');
   }
@@ -179,7 +197,11 @@ async function findTicketForScan(req) {
       code: ticket.code,
       message: 'Ticket belongs to a different event',
     }).catch(() => {});
-    throw new AppError('This ticket is for a different event', 400, 'WRONG_EVENT');
+    throw new AppError(
+      `This ticket is for "${ticket.eventTitle || 'another event'}" - select that event at the gate`,
+      400,
+      'WRONG_EVENT'
+    );
   }
 
   if (req.user.role === 'gate_agent') {
@@ -231,14 +253,14 @@ export const scanTicket = asyncHandler(async (req, res) => {
   let members = resolveTicketMembers(ticket);
   const remaining = members.filter((m) => !m.checkedIn);
 
-  // Fully checked in
+  // Fully checked in - don't fail if phone validation is picky on legacy rows
   if (ticket.status === 'used' || remaining.length === 0) {
     // Sync status if members say all in but status wasn't used
     if (ticket.status !== 'used' && members.length && remaining.length === 0) {
       ticket.status = 'used';
       ticket.scannedAt = ticket.scannedAt || new Date();
     }
-    await ticket.save();
+    await ticket.save({ validateBeforeSave: false });
     await ScanLog.create({
       ticketId: ticket._id,
       eventId: ticket.eventId,
@@ -267,7 +289,7 @@ export const scanTicket = asyncHandler(async (req, res) => {
     ticket.scannedAt = now;
     ticket.scannedBy = req.user._id;
     ticket.markModified('members');
-    await ticket.save();
+    await ticket.save({ validateBeforeSave: false });
 
     await Event.findByIdAndUpdate(ticket.eventId, { $inc: { checkInCount: 1 } });
     cacheDel('gate:');
@@ -295,7 +317,7 @@ export const scanTicket = asyncHandler(async (req, res) => {
   }
 
   // Party ticket with people still to enter  -  agent chooses who
-  await ticket.save();
+  await ticket.save({ validateBeforeSave: false });
   const enteredNames = members.filter((m) => m.checkedIn).map((m) => m.name);
   const leftNames = remaining.map((m) => m.name);
 
@@ -360,7 +382,7 @@ export const admitTicketMembers = asyncHandler(async (req, res) => {
     ticket.status = 'valid';
   }
 
-  await ticket.save();
+  await ticket.save({ validateBeforeSave: false });
 
   await Event.findByIdAndUpdate(ticket.eventId, { $inc: { checkInCount: toAdmit.length } });
   cacheDel('gate:');

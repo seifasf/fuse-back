@@ -7,6 +7,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { cacheGet, cacheSet } from '../utils/memoryCache.js';
+import { sendContactEmails } from '../services/email/index.js';
 
 const notDeleted = { deletedAt: null };
 const publicVisible = { ...notDeleted, visibleOnSite: { $ne: false } };
@@ -177,10 +178,14 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
     userAgent: String(req.headers['user-agent'] || '').slice(0, 400),
   });
 
+  // Fire-and-forget style: await but never fail the form if mail is down
+  const mail = await sendContactEmails({ name, email, phone, message });
+
   res.status(201).json({
     ok: true,
     id: doc._id,
     message: 'Message received  -  we will get back to you soon.',
+    emailQueued: Boolean(mail?.notify?.sent || mail?.ack?.sent || mail?.notify?.mock),
   });
 });
 

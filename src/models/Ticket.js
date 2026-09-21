@@ -42,7 +42,7 @@ const ticketSchema = new mongoose.Schema(
       type: [
         {
           name: { type: String, required: true, trim: true, maxlength: 120 },
-          phone: { type: String, required: true, trim: true, maxlength: 32 },
+          phone: { type: String, trim: true, maxlength: 32, default: '' },
           checkedIn: { type: Boolean, default: false },
           checkedInAt: { type: Date },
         },

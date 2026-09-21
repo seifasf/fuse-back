@@ -69,6 +69,21 @@ const adminSecurityKey =
     }) || 'fuse2026'
   ) || 'fuse2026';
 
+function parseFromAddress(raw) {
+  const v = cleanEnv(raw) || '';
+  const angled = v.match(/<([^>]+)>/);
+  if (angled) return angled[1].trim().toLowerCase();
+  if (v.includes('@')) return v.trim().toLowerCase();
+  return '';
+}
+
+function parseFromName(raw, fallback) {
+  const v = cleanEnv(raw) || '';
+  const angled = v.match(/^(.*)<[^>]+>/);
+  if (angled && angled[1].trim()) return angled[1].trim().replace(/^["']|["']$/g, '');
+  return fallback;
+}
+
 export const env = {
   port: Number(process.env.PORT) || 5000,
   nodeEnv,
@@ -101,6 +116,24 @@ export const env = {
   },
   /** Public base URL of this API (for uploaded image URLs). */
   apiPublicUrl: cleanUrl(process.env.API_PUBLIC_URL || ''),
+  /** Brevo transactional email — live when BREVO_API_KEY is set. */
+  email: {
+    apiKey: cleanEnv(process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY || ''),
+    fromEmail:
+      parseFromAddress(process.env.EMAIL_FROM_ADDRESS) ||
+      parseFromAddress(process.env.EMAIL_FROM) ||
+      'fuse.contact@fuseevents.net',
+    fromName:
+      cleanEnv(process.env.EMAIL_FROM_NAME) ||
+      parseFromName(process.env.EMAIL_FROM, 'FUSE Events') ||
+      'FUSE Events',
+    replyTo:
+      parseFromAddress(process.env.EMAIL_REPLY_TO) ||
+      parseFromAddress(process.env.EMAIL_FROM_ADDRESS) ||
+      parseFromAddress(process.env.EMAIL_FROM) ||
+      '',
+    notifyTo: parseFromAddress(process.env.EMAIL_NOTIFY_TO) || '',
+  },
 };
 
 if (isProd) {
@@ -113,4 +146,12 @@ if (isProd && !env.apiPublicUrl) {
   console.warn(
     'API_PUBLIC_URL is not set  -  uploaded media URLs will use the request Host header (usually fine on Render).'
   );
+}
+
+if (env.email.apiKey) {
+  console.log(
+    `[fuse] Brevo email ready (from=${env.email.fromEmail}${env.email.notifyTo ? `, notify=${env.email.notifyTo}` : ''})`
+  );
+} else if (isProd) {
+  console.warn('[fuse] BREVO_API_KEY not set — ticket/contact emails stay mocked until configured.');
 }
