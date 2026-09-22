@@ -1,4 +1,4 @@
-/** FUSE transactional email HTML — branded confirmation (tickets live in PDF attachments). */
+/** FUSE transactional email HTML - branded confirmation (tickets live in PDF attachments). */
 
 const BRAND = {
   bg: '#0a0a0f',
@@ -57,7 +57,7 @@ function plainBrief(text, max = 420) {
     .trim();
   if (!raw) return '';
   if (raw.length <= max) return raw;
-  return `${raw.slice(0, max - 1).trim()}…`;
+  return `${raw.slice(0, max - 1).trim()}...`;
 }
 
 function termsToHtml(terms) {

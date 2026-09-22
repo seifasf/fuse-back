@@ -6,16 +6,27 @@ import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOGO_WHITE = path.resolve(__dirname, '../../assets/logo-white.png');
-const LOGO_COLOR = path.resolve(__dirname, '../../assets/logo-color.png');
-const LOGO_PATH = fs.existsSync(LOGO_WHITE) ? LOGO_WHITE : LOGO_COLOR;
+const ASSETS = path.resolve(__dirname, '../../assets');
+const LOGO_COLOR = path.join(ASSETS, 'logo-color.png');
+const LOGO_WHITE = path.join(ASSETS, 'logo-white.png');
+/** Match website download: prefer color logo on the black header. */
+const LOGO_PATH = fs.existsSync(LOGO_COLOR) ? LOGO_COLOR : LOGO_WHITE;
+
+/** 1 mm in PDF points */
+const MM = 2.834645669;
+
+function mm(n) {
+  return n * MM;
+}
 
 function toPdfText(value, fallback = '') {
   return String(value ?? fallback)
     .normalize('NFKD')
-    .replace(/[\u2010-\u2015\u2212]/g, '-')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2022\u00B7]/g, '-')
+    .replace(/[\u00A0\u202F\u2007]/g, ' ')
     .replace(/[^\x20-\x7E]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -35,8 +46,8 @@ function safeFilename(code) {
 }
 
 /**
- * Build one printable FUSE ticket PDF (same layout as the website download).
- * Returns { filename, contentBase64, buffer }.
+ * Printable FUSE ticket PDF — same layout as the website jsPDF download
+ * (105 x 160 mm: black logo header, event, tier, QR, code box, footer).
  */
 export async function buildTicketPdfBuffer(ticket) {
   const eventTitle = toPdfText(ticket.eventTitle, 'FUSE Event') || 'FUSE Event';
@@ -64,9 +75,9 @@ export async function buildTicketPdfBuffer(ticket) {
     throw new Error('Ticket missing QR payload');
   }
 
-  const pageW = 105 * 2.83465; // mm ? pt (pdfkit uses pt; 1mm ? 2.83465pt)
-  const pageH = 160 * 2.83465;
-  const margin = 10 * 2.83465;
+  const pageW = mm(105);
+  const pageH = mm(160);
+  const margin = mm(10);
 
   const doc = new PDFDocument({
     size: [pageW, pageH],
@@ -87,83 +98,117 @@ export async function buildTicketPdfBuffer(ticket) {
   // White page
   doc.rect(0, 0, pageW, pageH).fill('#ffffff');
 
-  // Black header
-  doc.rect(0, 0, pageW, 30 * 2.83465).fill('#0a0a0f');
+  // Black header behind the company logo (30 mm)
+  doc.rect(0, 0, pageW, mm(30)).fill('#0a0a0f');
 
   if (fs.existsSync(LOGO_PATH)) {
-    const logoW = 52 * 2.83465;
-    const logoH = 18 * 2.83465;
-    doc.image(LOGO_PATH, (pageW - logoW) / 2, 6 * 2.83465, {
-      width: logoW,
-      height: logoH,
+    const logoW = mm(52);
+    const logoH = mm(18);
+    doc.image(LOGO_PATH, (pageW - logoW) / 2, mm(6), {
       fit: [logoW, logoH],
+      align: 'center',
+      valign: 'center',
     });
   } else {
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18);
-    doc.text('FUSE', 0, 14 * 2.83465, { width: pageW, align: 'center' });
+    doc.text('FUSE', 0, mm(14), { width: pageW, align: 'center' });
   }
 
-  let y = 40 * 2.83465;
+  // Content starts at 40 mm (pdfkit text y is top of line box)
+  let y = mm(40);
 
   doc.fillColor('#0a0a0f').font('Helvetica-Bold').fontSize(9);
-  doc.text('EVENT TICKET', margin, y, { width: pageW - margin * 2, align: 'center' });
-  y += 8 * 2.83465;
+  doc.text('EVENT TICKET', margin, y - mm(2.5), {
+    width: pageW - margin * 2,
+    align: 'center',
+    lineBreak: false,
+  });
+  y += mm(8);
 
   doc.fontSize(14);
-  doc.text(eventTitle, margin, y, { width: pageW - margin * 2, align: 'center' });
-  y = doc.y + 4 * 2.83465;
+  const titleHeight = doc.heightOfString(eventTitle, {
+    width: pageW - margin * 2,
+    align: 'center',
+  });
+  doc.text(eventTitle, margin, y - mm(3.5), {
+    width: pageW - margin * 2,
+    align: 'center',
+  });
+  y += Math.max(mm(6), titleHeight) + mm(4);
 
   doc.font('Helvetica').fontSize(9).fillColor('#50505f');
   if (tierName) {
     const rgb = hexToRgb(colorForTierName(ticket.tierName, ticket.tierColor));
-    const label = `${tierName}  |  admits ${admitCount}`;
+    // Same as website (middle-dot becomes ASCII '-' via toPdfText path; use " - ")
+    const label = `${tierName}  -  admits ${admitCount}`;
     const textW = doc.widthOfString(label);
-    const startX = pageW / 2 - (textW + 10) / 2;
-    doc.circle(startX + 3, y + 3, 3).fill(`rgb(${rgb.r},${rgb.g},${rgb.b})`);
-    doc.fillColor('#50505f').text(label, startX + 10, y, { lineBreak: false });
-    y += 6 * 2.83465;
+    const gap = mm(3);
+    const dot = mm(2.2);
+    const totalW = textW + gap + dot;
+    const startX = pageW / 2 - totalW / 2;
+    doc
+      .circle(startX + dot / 2, y - mm(1.1), dot / 2)
+      .fill(`rgb(${rgb.r},${rgb.g},${rgb.b})`);
+    doc.fillColor('#50505f').text(label, startX + dot + gap, y - mm(3), {
+      lineBreak: false,
+    });
+    y += mm(6);
   }
 
   if (memberLines.length) {
     doc.fontSize(8);
     for (const line of memberLines) {
-      doc.text(line, margin, y, { width: pageW - margin * 2, align: 'center' });
-      y += 4 * 2.83465;
+      doc.text(line, margin, y - mm(2.5), {
+        width: pageW - margin * 2,
+        align: 'center',
+        lineBreak: false,
+      });
+      y += mm(4);
     }
-    y += 2 * 2.83465;
+    y += mm(2);
   } else if (holderName) {
-    doc.text(holderName, margin, y, { width: pageW - margin * 2, align: 'center' });
-    y += 5 * 2.83465;
+    doc.text(holderName, margin, y - mm(2.5), {
+      width: pageW - margin * 2,
+      align: 'center',
+      lineBreak: false,
+    });
+    y += mm(5);
   }
 
-  y += 2 * 2.83465;
-  const qrSize = 58 * 2.83465;
+  y += mm(2);
+
+  const qrSize = mm(58);
   const qrX = (pageW - qrSize) / 2;
+  // Website: 3 mm padding, 3 mm corner radius
   doc
-    .roundedRect(qrX - 8, y - 8, qrSize + 16, qrSize + 16, 8)
+    .roundedRect(qrX - mm(3), y - mm(3), qrSize + mm(6), qrSize + mm(6), mm(3))
     .fillAndStroke('#ffffff', '#e6e6eb');
   doc.image(qrPng, qrX, y, { width: qrSize, height: qrSize });
-  y += qrSize + 10 * 2.83465;
+  y += qrSize + mm(10);
 
-  // Code box
-  const boxH = 18 * 2.83465;
-  doc.roundedRect(margin, y, pageW - margin * 2, boxH, 8).fill('#f6f8fb');
+  // Ticket code box — 18 mm tall, 3 mm radius
+  doc.roundedRect(margin, y, pageW - margin * 2, mm(18), mm(3)).fill('#f6f8fb');
   doc.fillColor('#0a0a0f').font('Helvetica-Bold').fontSize(13);
-  doc.text(code, margin, y + 11, { width: pageW - margin * 2, align: 'center' });
-
-  y += 24 * 2.83465;
-  doc.font('Helvetica').fontSize(7).fillColor('#9696a0');
-  doc.text('FUSE Events  |  fuseevents.net', margin, y, {
+  doc.text(code, margin, y + mm(11.5) - mm(4.5), {
     width: pageW - margin * 2,
     align: 'center',
+    lineBreak: false,
   });
 
-  y += 7 * 2.83465;
+  y += mm(24);
+  doc.font('Helvetica').fontSize(7).fillColor('#9696a0');
+  doc.text('FUSE Events  |  fuseevents.net', margin, y - mm(2), {
+    width: pageW - margin * 2,
+    align: 'center',
+    lineBreak: false,
+  });
+
+  y += mm(7);
   doc.fontSize(7.5).fillColor('#6e6e7d');
   doc.text(
     'Present this QR at the entrance. If the scanner fails, gate staff can verify with the written ticket code above.',
     margin,
-    y,
+    y - mm(2),
     { width: pageW - margin * 2, align: 'center' }
   );
 
@@ -176,7 +221,6 @@ export async function buildTicketPdfBuffer(ticket) {
   };
 }
 
-/** Build PDFs for many tickets (one file per QR / tier line). */
 export async function buildTicketPdfs(tickets) {
   const out = [];
   for (const t of tickets || []) {
