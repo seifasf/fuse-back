@@ -177,8 +177,10 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         toEmail: booking.guest.email,
         toName: booking.guest.name,
         eventTitle: existing[0]?.eventTitle || eventDoc?.title || booking.eventSnapshot?.title,
+        eventDescription: eventDoc?.description,
         venue: eventDoc?.venue || booking.eventSnapshot?.venue,
         startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
+        termsAndConditions: eventDoc?.termsAndConditions,
         tickets: existing,
         complimentary: booking.paymentProvider === 'manual',
       });
@@ -261,8 +263,10 @@ export const confirmPayment = asyncHandler(async (req, res) => {
     toEmail: booking.guest.email,
     toName: booking.guest.name,
     eventTitle,
+    eventDescription: eventDoc?.description,
     venue: eventDoc?.venue || booking.eventSnapshot?.venue,
     startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
+    termsAndConditions: eventDoc?.termsAndConditions,
     tickets,
     complimentary: false,
   });

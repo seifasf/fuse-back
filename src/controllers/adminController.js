@@ -881,8 +881,10 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       toEmail: guestEmail,
       toName: guestName,
       eventTitle: event.title,
+      eventDescription: event.description,
       venue: event.venue,
       startsAt: event.startsAt,
+      termsAndConditions: event.termsAndConditions,
       tickets,
       complimentary: true,
     });

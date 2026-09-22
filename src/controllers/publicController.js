@@ -7,24 +7,11 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { cacheGet, cacheSet } from '../utils/memoryCache.js';
+import { resolveTerms } from '../services/resolveTerms.js';
 import { sendContactEmails } from '../services/email/index.js';
 
 const notDeleted = { deletedAt: null };
 const publicVisible = { ...notDeleted, visibleOnSite: { $ne: false } };
-
-let cachedSiteTerms = { value: null, expires: 0 };
-
-async function resolveTerms(eventTerms) {
-  const custom = typeof eventTerms === 'string' ? eventTerms.trim() : '';
-  if (custom) return custom;
-  if (cachedSiteTerms.expires > Date.now() && cachedSiteTerms.value != null) {
-    return cachedSiteTerms.value;
-  }
-  const content = await SiteContent.findOne({ key: 'home' }).select('termsAndConditions').lean();
-  const siteTerms = content?.termsAndConditions?.trim() || DEFAULT_TERMS_AND_CONDITIONS;
-  cachedSiteTerms = { value: siteTerms, expires: Date.now() + 60_000 };
-  return siteTerms;
-}
 
 /** Card lists  -  keep payloads small (no gallery / images arrays). */
 const EVENT_CARD_FIELDS =

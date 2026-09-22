@@ -1,5 +1,6 @@
-import QRCode from 'qrcode';
 import { env } from '../../config/env.js';
+import { buildTicketPdfBuffer } from '../ticketPdf.js';
+import { resolveTerms } from '../resolveTerms.js';
 import { sendBrevoEmail, isEmailConfigured } from './brevo.js';
 import {
   buildTicketsEmail,
@@ -7,72 +8,70 @@ import {
   buildContactAckEmail,
 } from './templates.js';
 
-async function qrPngBase64(payload) {
-  const dataUrl = await QRCode.toDataURL(payload, {
-    margin: 2,
-    width: 360,
-    errorCorrectionLevel: 'M',
-    color: { dark: '#000000', light: '#ffffff' },
-  });
-  return dataUrl.replace(/^data:image\/png;base64,/, '');
-}
-
 /**
- * Send ticket confirmation / complimentary pass email with inline QR images.
+ * Branded booking confirmation email.
+ * Tickets are PDF attachments only (no ticket-card HTML / QR in the body).
  * Never throws — failures are logged so checkout stays reliable.
  */
 export async function sendTicketsEmail({
   toEmail,
   toName,
   eventTitle,
+  eventDescription,
   venue,
   startsAt,
   tickets,
+  termsAndConditions,
   complimentary = false,
 }) {
   try {
     if (!toEmail) return { sent: false, error: 'missing_to' };
 
-    const ready = [];
-    for (const t of tickets || []) {
-      const payload = t.qrPayload;
-      if (!payload) continue;
-      const content = await qrPngBase64(payload);
-      ready.push({
-        ...t,
-        _qrBase64: content,
-      });
-    }
-
+    const ready = (tickets || []).filter((t) => t?.qrPayload || t?.qrDataUrl || t?.code);
     if (!ready.length) {
       return { sent: false, error: 'no_tickets' };
     }
 
     const siteUrl = env.clientUrl || 'https://fuseevents.net';
+    const terms = await resolveTerms(termsAndConditions);
+
     const built = buildTicketsEmail({
       guestName: toName,
       eventTitle: eventTitle || 'FUSE Event',
+      eventDescription,
       venue,
       startsAt,
-      tickets: ready,
+      ticketCount: ready.length,
+      termsAndConditions: terms,
       siteUrl,
       complimentary,
     });
 
-    const attachments = ready.flatMap((t, i) => [
-      {
-        name: `fuse-qr-${t.code || i}.png`,
-        content: t._qrBase64,
-        contentId: `qr${i}`,
-      },
-      // Also attach as downloadable files (some clients ignore cid)
-      {
-        name: `${t.code || `ticket-${i}`}.png`,
-        content: t._qrBase64,
-      },
-    ]);
+    const attachments = [];
+    for (const t of ready) {
+      try {
+        const pdf = await buildTicketPdfBuffer({
+          ...t,
+          eventTitle: t.eventTitle || eventTitle,
+          holderName: t.holderName || toName,
+        });
+        attachments.push({
+          name: pdf.filename,
+          content: pdf.contentBase64,
+        });
+      } catch (pdfErr) {
+        console.error(
+          `[email] PDF build failed for ${t.code}:`,
+          pdfErr?.message || pdfErr
+        );
+      }
+    }
 
-    const result = await sendBrevoEmail({
+    if (!attachments.length) {
+      return { sent: false, error: 'pdf_failed' };
+    }
+
+    return sendBrevoEmail({
       to: { email: toEmail, name: toName },
       subject: built.subject,
       htmlContent: built.html,
@@ -80,8 +79,6 @@ export async function sendTicketsEmail({
       attachments,
       tags: complimentary ? ['fuse-manual-ticket'] : ['fuse-booking-tickets'],
     });
-
-    return result;
   } catch (err) {
     console.error('[email] sendTicketsEmail failed:', err?.message || err);
     return { sent: false, error: String(err?.message || err) };
