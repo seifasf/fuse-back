@@ -20,6 +20,12 @@ const bookingItemSchema = new mongoose.Schema(
       default: [],
       validate: [(arr) => arr.length <= 50, 'Max 50 members per line'],
     },
+    /** Seat labels (e.g. VIP-12) for seated events; empty for regular tiers. Same order as members. */
+    seats: {
+      type: [{ type: String, trim: true, maxlength: 30 }],
+      default: [],
+      validate: [(arr) => arr.length <= 50, 'Max 50 seats per line'],
+    },
   },
   { _id: false }
 );
@@ -76,6 +82,8 @@ const bookingSchema = new mongoose.Schema(
     whatsappSentAt: { type: Date },
     /** Pending bookings expire after TTL window (set by app) */
     expiresAt: { type: Date },
+    /** Browser hold token used to reserve seats during checkout (seated events only). */
+    seatHoldToken: { type: String, default: '' },
   },
   { timestamps: true }
 );

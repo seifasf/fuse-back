@@ -13,9 +13,16 @@ import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import { cacheDel } from '../utils/memoryCache.js';
 import { sendTicketsEmail, isEmailConfigured } from '../services/email/index.js';
+import mongoose from 'mongoose';
+import { SeatMap } from '../models/SeatMap.js';
+import {
+  claimSeatsForBooking,
+  finalizeBookingSeats,
+  releaseBookingSeats,
+} from '../services/seatMapService.js';
 
 export const createBooking = asyncHandler(async (req, res) => {
-  const { eventId, items, guest, provider, acceptedTerms } = req.body;
+  const { eventId, items, guest, provider, acceptedTerms, holdToken } = req.body;
   if (!eventId || !items?.length || !guest?.email) {
     throw new AppError('Missing booking fields', 400, 'VALIDATION_ERROR');
   }
@@ -39,6 +46,13 @@ export const createBooking = asyncHandler(async (req, res) => {
   let total = 0;
   let ticketCount = 0;
   const validatedItems = [];
+
+  const seatMap = await SeatMap.findOne({ eventId: event._id, status: 'published' }).lean();
+  const seatedTierByTierId = new Map(
+    (seatMap?.tiers || []).filter((t) => t.tierId).map((t) => [String(t.tierId), t])
+  );
+  const seatByLabel = new Map((seatMap?.seats || []).map((s) => [s.label, s]));
+  const allSeatLabels = [];
 
   for (const item of items) {
     const tier = await TicketTier.findOne({ _id: item.tierId, eventId, isActive: true });
@@ -72,6 +86,23 @@ export const createBooking = asyncHandler(async (req, res) => {
       return { name: name.slice(0, 120), phone: phone.slice(0, 32) };
     });
 
+    const seatedTier = seatedTierByTierId.get(String(tier._id));
+    const rawSeats = Array.isArray(item.seats) ? item.seats : [];
+    let seats = [];
+    if (seatedTier) {
+      seats = [...new Set(rawSeats.map((s) => String(s || '').trim()).filter(Boolean))];
+      if (seats.length !== qty) {
+        throw new AppError(`Pick ${qty} seat(s) on the map for ${tier.name}`, 400, 'SEATS_REQUIRED');
+      }
+      const wrong = seats.filter((label) => seatByLabel.get(label)?.tierKey !== seatedTier.key);
+      if (wrong.length) {
+        throw new AppError(`Seat ${wrong[0]} is not a ${tier.name} seat`, 400, 'INVALID_SEAT');
+      }
+      allSeatLabels.push(...seats);
+    } else if (rawSeats.length) {
+      throw new AppError(`${tier.name} tickets don't have seat numbers`, 400, 'INVALID_SEAT');
+    }
+
     validatedItems.push({
       tierId: tier._id,
       tierName: tier.name,
@@ -79,6 +110,7 @@ export const createBooking = asyncHandler(async (req, res) => {
       qty,
       unitPrice: tier.price,
       members,
+      seats,
     });
     total += tier.price * qty;
     ticketCount += qty;
@@ -94,28 +126,52 @@ export const createBooking = asyncHandler(async (req, res) => {
   const guestPhone =
     (typeof guest.phone === 'string' && guest.phone.trim()) || primary?.phone || '';
 
-  const booking = await Booking.create({
-    clientId: req.user?._id || null,
-    guest: {
-      name: guestName.slice(0, 120),
-      email,
-      phone: guestPhone.slice(0, 32),
-    },
-    eventId,
-    eventSnapshot: {
-      title: event.title,
-      country: event.country,
-      startsAt: event.startsAt,
-      venue: event.venue,
-    },
-    items: validatedItems,
-    ticketCount,
-    total,
-    currency,
-    status: 'pending',
-    paymentProvider: provider || 'mock',
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-  });
+  const bookingId = new mongoose.Types.ObjectId();
+  let seatHoldToken = '';
+  if (allSeatLabels.length) {
+    if (allSeatLabels.length > seatMap.maxSeatsPerOrder) {
+      throw new AppError(`You can pick up to ${seatMap.maxSeatsPerOrder} seats per order`, 400, 'LIMIT');
+    }
+    const claim = await claimSeatsForBooking({
+      eventId: event._id,
+      map: seatMap,
+      labels: allSeatLabels,
+      holdToken,
+      bookingId,
+    });
+    seatHoldToken = claim.holdToken;
+  }
+
+  let booking;
+  try {
+    booking = await Booking.create({
+      _id: bookingId,
+      seatHoldToken,
+      clientId: req.user?._id || null,
+      guest: {
+        name: guestName.slice(0, 120),
+        email,
+        phone: guestPhone.slice(0, 32),
+      },
+      eventId,
+      eventSnapshot: {
+        title: event.title,
+        country: event.country,
+        startsAt: event.startsAt,
+        venue: event.venue,
+      },
+      items: validatedItems,
+      ticketCount,
+      total,
+      currency,
+      status: 'pending',
+      paymentProvider: provider || 'mock',
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    });
+  } catch (err) {
+    if (allSeatLabels.length) await releaseBookingSeats(bookingId);
+    throw err;
+  }
 
   const paymentProvider = getPaymentProvider(event.country, provider);
   const returnPath = `/booking/${booking._id}/confirmation`;
@@ -147,8 +203,8 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         : await generateTicketQrDataUrl(t._id, booking._id, t.eventId);
       const members =
         Array.isArray(t.members) && t.members.length
-          ? t.members.map((m) => ({ name: m.name, phone: m.phone }))
-          : [{ name: t.holderName, phone: t.holderPhone || '' }];
+          ? t.members.map((m) => ({ name: m.name, phone: m.phone, seat: m.seat || '' }))
+          : [{ name: t.holderName, phone: t.holderPhone || '', seat: '' }];
       out.push({
         id: t._id,
         code: t.code,
@@ -159,19 +215,20 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         holderName: t.holderName,
         admitCount: t.admitCount || members.length || 1,
         members,
+        seats: Array.isArray(t.seats) ? t.seats : [],
         qrDataUrl,
       });
     }
     return out;
   };
 
-  if (booking.status === 'paid') {
+  const sendAlreadyPaid = async (booking, { retryEmail = true } = {}) => {
     const existing = await Ticket.find({ bookingId });
     const formatted = await formatTickets(existing);
 
     // Retry email if it never went out (e.g. Brevo was added later)
     let emailSent = Boolean(booking.emailSentAt);
-    if (!emailSent && isEmailConfigured() && existing.length) {
+    if (retryEmail && !emailSent && isEmailConfigured() && existing.length) {
       const eventDoc = booking.eventId;
       const mail = await sendTicketsEmail({
         toEmail: booking.guest.email,
@@ -198,14 +255,38 @@ export const confirmPayment = asyncHandler(async (req, res) => {
       delivery: emailSent ? 'email+download' : 'download',
       emailSent,
     });
-  }
+  };
+
+  if (booking.status === 'paid') return sendAlreadyPaid(booking);
 
   if (booking.status !== 'pending') {
     throw new AppError('Booking cannot be paid', 400, 'INVALID_STATUS');
   }
 
+  if (booking.items.some((item) => item.seats?.length)) {
+    const seatMap = await SeatMap.findOne({ eventId: booking.eventId?._id || booking.eventId }).lean();
+    if (!seatMap) throw new AppError('The seat map for this event is no longer available', 409, 'SEAT_UNAVAILABLE');
+    await finalizeBookingSeats(booking, seatMap);
+  }
+
+  // Only one concurrent confirm may issue tickets; the others wait for them and return them.
+  const paidAt = new Date();
+  const claimed = await Booking.updateOne(
+    { _id: booking._id, status: 'pending' },
+    { $set: { status: 'paid', paidAt } }
+  );
+  if (!claimed.modifiedCount) {
+    for (let i = 0; i < 40; i += 1) {
+      if ((await Ticket.countDocuments({ bookingId: booking._id })) >= booking.items.length) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const fresh = await Booking.findById(bookingId).populate('eventId');
+    if (fresh?.status !== 'paid') throw new AppError('Booking cannot be paid', 400, 'INVALID_STATUS');
+    return sendAlreadyPaid(fresh, { retryEmail: false });
+  }
+
   booking.status = 'paid';
-  booking.paidAt = new Date();
+  booking.paidAt = paidAt;
   await booking.save();
 
   const eventDoc = booking.eventId;
@@ -215,7 +296,8 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   const tickets = [];
 
   for (const item of booking.items) {
-    const members =
+    const seats = Array.isArray(item.seats) ? item.seats : [];
+    const members = (
       Array.isArray(item.members) && item.members.length === item.qty
         ? item.members.map((m) => ({
             name: String(m.name || '').trim(),
@@ -224,7 +306,8 @@ export const confirmPayment = asyncHandler(async (req, res) => {
         : Array.from({ length: item.qty }, () => ({
             name: booking.guest.name,
             phone: booking.guest.phone || '',
-          }));
+          }))
+    ).map((m, i) => (seats[i] ? { ...m, seat: seats[i] } : m));
 
     const holderName = members.map((m) => m.name).filter(Boolean).join(', ') || booking.guest.name;
     const holderPhone = members[0]?.phone || booking.guest.phone || '';
@@ -239,6 +322,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
       holderEmail: booking.guest.email,
       holderPhone: holderPhone.slice(0, 32),
       members,
+      seats,
       admitCount: item.qty,
       tierName: item.tierName,
       tierColor: normalizeHexColor(item.tierColor || colorForTierName(item.tierName)),

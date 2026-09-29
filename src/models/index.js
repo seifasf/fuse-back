@@ -6,4 +6,6 @@ export { Ticket } from './Ticket.js';
 export { Character } from './Character.js';
 export { SiteContent } from './SiteContent.js';
 export { ScanLog } from './ScanLog.js';
+export { SeatMap } from './SeatMap.js';
+export { SeatReservation } from './SeatReservation.js';
 export * from './constants.js';

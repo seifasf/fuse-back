@@ -19,6 +19,8 @@ import { generateTicketQrDataUrl, getQrPayload } from '../services/ticketQr.js';
 import { sendTicketWhatsApp } from '../services/whatsapp.js';
 import { sendTicketsEmail } from '../services/email/index.js';
 import { cacheDel } from '../utils/memoryCache.js';
+import { SeatMap } from '../models/SeatMap.js';
+import { autoAssignSeats, releaseBookingSeats } from '../services/seatMapService.js';
 
 /* ??? Events ??????????????????????????????????????????????? */
 
@@ -271,8 +273,26 @@ export const adminCreateTier = asyncHandler(async (req, res) => {
   res.status(201).json({ tier });
 });
 
+const SEAT_MAP_MANAGED_FIELDS = ['name', 'price', 'quantity', 'color', 'isActive', 'currency'];
+
+async function assertTierNotSeatManaged(eventId, tierId) {
+  const map = await SeatMap.findOne({ eventId, status: 'published', 'tiers.tierId': tierId })
+    .select('_id')
+    .lean();
+  if (map) {
+    throw new AppError(
+      'This tier is managed by the seat map. Edit it in the Seat Map tab.',
+      409,
+      'SEAT_MAP_MANAGED'
+    );
+  }
+}
+
 export const adminUpdateTier = asyncHandler(async (req, res) => {
   const data = { ...req.body };
+  if (SEAT_MAP_MANAGED_FIELDS.some((f) => data[f] !== undefined)) {
+    await assertTierNotSeatManaged(req.params.eventId, req.params.tierId);
+  }
   if (data.name) data.name = String(data.name).trim();
   if (data.color || data.name) {
     data.color = normalizeHexColor(data.color || colorForTierName(data.name));
@@ -286,6 +306,7 @@ export const adminUpdateTier = asyncHandler(async (req, res) => {
 });
 
 export const adminDeleteTier = asyncHandler(async (req, res) => {
+  await assertTierNotSeatManaged(req.params.eventId, req.params.tierId);
   await TicketTier.findByIdAndDelete(req.params.tierId);
   res.json({ deleted: true });
 });
@@ -405,6 +426,7 @@ export const adminListBookings = asyncHandler(async (req, res) => {
 });
 
 export const adminCancelBooking = asyncHandler(async (req, res) => {
+  const previous = await Booking.findById(req.params.id).select('status').lean();
   const booking = await Booking.findByIdAndUpdate(
     req.params.id,
     { status: 'cancelled', cancelledAt: new Date() },
@@ -415,6 +437,26 @@ export const adminCancelBooking = asyncHandler(async (req, res) => {
     { bookingId: booking._id, status: { $ne: 'used' } },
     { status: 'cancelled' }
   );
+
+  const seatedItems = booking.items.filter((item) => item.seats?.length);
+  if (seatedItems.length) {
+    await releaseBookingSeats(booking._id);
+    if (previous?.status === 'paid') {
+      let freed = 0;
+      for (const item of seatedItems) {
+        freed += item.seats.length;
+        await TicketTier.updateOne(
+          { _id: item.tierId, sold: { $gte: item.seats.length } },
+          { $inc: { sold: -item.seats.length } }
+        );
+      }
+      await Event.updateOne(
+        { _id: booking.eventId, ticketsSold: { $gte: freed } },
+        { $inc: { ticketsSold: -freed } }
+      );
+      cacheDel('public:');
+    }
+  }
   res.json({ booking });
 });
 
@@ -797,7 +839,24 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
     throw new AppError('Guest name is required', 400, 'VALIDATION_ERROR');
   }
 
+  const bookingId = new mongoose.Types.ObjectId();
+  let seats = [];
+  const seatMap = await SeatMap.findOne({ eventId: event._id, status: 'published' }).lean();
+  const seatedTier = seatMap?.tiers.find((t) => String(t.tierId) === String(tier._id));
+  if (seatedTier) {
+    seats = await autoAssignSeats({
+      eventId: event._id,
+      map: seatMap,
+      tierKey: seatedTier.key,
+      tierId: tier._id,
+      qty: quantity,
+      bookingId,
+    });
+    members = members.map((m, i) => ({ ...m, seat: seats[i] }));
+  }
+
   const booking = await Booking.create({
+    _id: bookingId,
     guest: {
       name: guestName,
       email: guestEmail,
@@ -818,6 +877,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
         qty: quantity,
         unitPrice: 0,
         members,
+        seats,
       },
     ],
     ticketCount: quantity,
@@ -843,6 +903,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
     holderEmail: guestEmail,
     holderPhone: guestPhone === ' - ' ? '' : guestPhone,
     members,
+    seats,
     admitCount: quantity,
     tierName: tier.name,
     tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
@@ -910,7 +971,9 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
       members: (t.members || []).map((m) => ({
         name: m.name,
         phone: m.phone || '',
+        seat: m.seat || '',
       })),
+      seats: t.seats || [],
       qrDataUrl: qrDataUrls[i].qrDataUrl,
     })),
     whatsappSent: Boolean(booking.whatsappSentAt),

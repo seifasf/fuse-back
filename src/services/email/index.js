@@ -11,7 +11,7 @@ import {
 /**
  * Branded booking confirmation email.
  * Tickets are PDF attachments only (no ticket-card HTML / QR in the body).
- * Never throws — failures are logged so checkout stays reliable.
+ * Never throws - failures are logged so checkout stays reliable.
  */
 export async function sendTicketsEmail({
   toEmail,
@@ -27,7 +27,9 @@ export async function sendTicketsEmail({
   try {
     if (!toEmail) return { sent: false, error: 'missing_to' };
 
-    const ready = (tickets || []).filter((t) => t?.qrPayload || t?.qrDataUrl || t?.code);
+    const ready = (tickets || [])
+      .map((t) => (typeof t?.toObject === 'function' ? t.toObject() : t))
+      .filter((t) => t?.qrPayload || t?.qrDataUrl || t?.code);
     if (!ready.length) {
       return { sent: false, error: 'no_tickets' };
     }

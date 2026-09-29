@@ -13,6 +13,9 @@ import {
   adminListContactMessages, adminGetContactMessage, adminUpdateContactMessage, adminDeleteContactMessage,
   adminListEventCategories, adminUpdateEventCategories,
 } from '../controllers/adminController.js';
+import {
+  adminGetSeatMap, adminSaveSeatMap, adminUnpublishSeatMap,
+} from '../controllers/seatMapController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { uploadMiddleware, uploadImage, deleteMedia } from '../controllers/uploadController.js';
 import { cacheDel } from '../utils/memoryCache.js';
@@ -51,6 +54,11 @@ router.get('/events/:eventId/tiers', adminListTiers);
 router.post('/events/:eventId/tiers', adminCreateTier);
 router.put('/events/:eventId/tiers/:tierId', adminUpdateTier);
 router.delete('/events/:eventId/tiers/:tierId', adminDeleteTier);
+
+// Seat map
+router.get('/events/:eventId/seatmap', adminGetSeatMap);
+router.put('/events/:eventId/seatmap', adminSaveSeatMap);
+router.post('/events/:eventId/seatmap/unpublish', adminUnpublishSeatMap);
 
 // Characters
 router.get('/characters', adminListCharacters);

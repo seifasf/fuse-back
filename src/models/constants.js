@@ -26,6 +26,10 @@ export const TICKET_STATUSES = ['valid', 'used', 'cancelled', 'refunded'];
 
 export const PAYMENT_PROVIDERS = ['mock', 'paymob', 'myfatoorah', 'manual'];
 
+export const SEAT_MAP_STATUSES = ['draft', 'published'];
+
+export const SEAT_RESERVATION_STATUSES = ['held', 'sold'];
+
 export const SECTION_TYPES = [
   'hero',
   'stats',

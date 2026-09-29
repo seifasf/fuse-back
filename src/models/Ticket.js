@@ -43,6 +43,7 @@ const ticketSchema = new mongoose.Schema(
         {
           name: { type: String, required: true, trim: true, maxlength: 120 },
           phone: { type: String, trim: true, maxlength: 32, default: '' },
+          seat: { type: String, trim: true, maxlength: 30, default: '' },
           checkedIn: { type: Boolean, default: false },
           checkedInAt: { type: Date },
         },
@@ -56,6 +57,12 @@ const ticketSchema = new mongoose.Schema(
     checkedInCount: { type: Number, default: 0, min: 0, max: 50 },
     tierName: { type: String, required: true },
     tierColor: { type: String, default: '#64748B', maxlength: 7 },
+    /** Seat labels covered by this QR (seated events only). */
+    seats: {
+      type: [{ type: String, trim: true, maxlength: 30 }],
+      default: [],
+      validate: [(arr) => arr.length <= 50, 'Max 50 seats per ticket'],
+    },
     eventTitle: { type: String, required: true },
     scannedAt: { type: Date },
     scannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

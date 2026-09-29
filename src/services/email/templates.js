@@ -1,4 +1,4 @@
-/** FUSE transactional email HTML - branded confirmation (tickets live in PDF attachments). */
+/** FUSE transactional email HTML - compact branded confirmation (PDFs attached). */
 
 const BRAND = {
   bg: '#0a0a0f',
@@ -50,7 +50,7 @@ function formatWhen(iso) {
   }
 }
 
-function plainBrief(text, max = 420) {
+function plainBrief(text, max = 160) {
   const raw = String(text || '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
@@ -60,10 +60,12 @@ function plainBrief(text, max = 420) {
   return `${raw.slice(0, max - 1).trim()}...`;
 }
 
-function termsToHtml(terms) {
+/** Keep terms short in email; full text lives on the site / checkout. */
+function compactTerms(terms, max = 520) {
   const text = String(terms || '').trim();
   if (!text) return '';
-  return escapeHtml(text).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>');
+  const clipped = text.length > max ? `${text.slice(0, max - 1).trim()}...` : text;
+  return escapeHtml(clipped).replace(/\r\n/g, '\n').replace(/\n{2,}/g, '\n').replace(/\n/g, '<br/>');
 }
 
 function shell({ preheader, title, bodyHtml, siteUrl }) {
@@ -77,35 +79,28 @@ function shell({ preheader, title, bodyHtml, siteUrl }) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
-  <meta name="supported-color-schemes" content="dark" />
   <title>${escapeHtml(title || 'FUSE')}</title>
-  <!--[if mso]><style>body,table,td{font-family:Arial,Helvetica,sans-serif!important}</style><![endif]-->
 </head>
 <body style="margin:0;padding:0;background:${BRAND.bg};color:${BRAND.text};">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${safePre}</div>
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${safePre}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BRAND.bg};">
     <tr>
-      <td align="center" style="padding:32px 16px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:${BRAND.card};border:1px solid ${BRAND.border};border-radius:18px;overflow:hidden;">
+      <td align="center" style="padding:20px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:440px;background:${BRAND.card};border:1px solid ${BRAND.border};border-radius:14px;overflow:hidden;">
           <tr>
-            <td style="background:${BRAND.bg};padding:28px 28px 22px;border-bottom:1px solid ${BRAND.border};" align="center">
-              <img src="${logo}" width="148" height="40" alt="FUSE" style="display:block;margin:0 auto;border:0;outline:none;height:40px;width:auto;max-width:160px;" />
-              <div style="margin-top:10px;height:2px;width:56px;background:linear-gradient(90deg,${BRAND.pink},${BRAND.cyan});border-radius:2px;"></div>
+            <td style="background:${BRAND.bg};padding:16px 18px 14px;border-bottom:1px solid ${BRAND.border};" align="center">
+              <img src="${logo}" width="110" height="30" alt="FUSE" style="display:block;margin:0 auto;border:0;height:30px;width:auto;max-width:120px;" />
             </td>
           </tr>
           <tr>
-            <td style="padding:28px 28px 8px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:${BRAND.text};">
+            <td style="padding:18px 18px 6px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45;color:${BRAND.text};">
               ${bodyHtml}
             </td>
           </tr>
           <tr>
-            <td style="padding:8px 28px 28px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:${BRAND.muted};" align="center">
-              <p style="margin:0 0 6px;">Kuwait | Egypt</p>
-              <p style="margin:0 0 6px;">
-                <a href="${escapeHtml(origin)}" style="color:${BRAND.cyan};text-decoration:none;">${escapeHtml(origin.replace(/^https?:\/\//, ''))}</a>
-              </p>
-              <p style="margin:0;">(c) ${year} FUSE Events</p>
+            <td style="padding:6px 18px 16px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.4;color:${BRAND.muted};" align="center">
+              <a href="${escapeHtml(origin)}" style="color:${BRAND.cyan};text-decoration:none;">fuseevents.net</a>
+              &nbsp;|&nbsp;(c) ${year} FUSE
             </td>
           </tr>
         </table>
@@ -131,74 +126,53 @@ export function buildTicketsEmail({
   const place = [venue].filter(Boolean).join(' | ');
   const brief = plainBrief(eventDescription);
   const title = complimentary ? 'Your complimentary FUSE tickets' : 'Your FUSE tickets';
-  const greeting = guestName ? `Hi ${escapeHtml(guestName)},` : 'Welcome,';
+  const greeting = guestName ? `Hi ${escapeHtml(guestName)},` : 'Hi,';
   const welcome = complimentary
-    ? `Welcome to FUSE. Your complimentary pass is ready.`
-    : `Welcome to FUSE. Your booking is confirmed.`;
+    ? 'Your complimentary pass is ready.'
+    : 'Your booking is confirmed.';
   const origin = siteOrigin(siteUrl);
   const count = Math.max(1, Number(ticketCount) || 1);
-  const termsHtml = termsToHtml(termsAndConditions);
+  const termsHtml = compactTerms(termsAndConditions);
 
-  const metaRows = [
-    when
-      ? `<tr>
-          <td style="padding:8px 0;color:${BRAND.muted};font-size:12px;letter-spacing:0.08em;text-transform:uppercase;width:72px;vertical-align:top;">When</td>
-          <td style="padding:8px 0;color:${BRAND.white};font-size:14px;">${escapeHtml(when)}</td>
-        </tr>`
-      : '',
-    place
-      ? `<tr>
-          <td style="padding:8px 0;color:${BRAND.muted};font-size:12px;letter-spacing:0.08em;text-transform:uppercase;vertical-align:top;">Where</td>
-          <td style="padding:8px 0;color:${BRAND.white};font-size:14px;">${escapeHtml(place)}</td>
-        </tr>`
-      : '',
-  ].join('');
+  const metaBits = [
+    when ? `<span style="color:${BRAND.muted};">When</span> ${escapeHtml(when)}` : '',
+    place ? `<span style="color:${BRAND.muted};">Where</span> ${escapeHtml(place)}` : '',
+  ].filter(Boolean);
 
   const bodyHtml = `
-    <p style="margin:0 0 6px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND.cyan};">
-      ${complimentary ? 'Complimentary pass' : 'Booking confirmed'}
+    <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:${BRAND.cyan};">
+      ${complimentary ? 'Complimentary' : 'Confirmed'}
     </p>
-    <p style="margin:0 0 10px;font-size:22px;font-weight:700;line-height:1.25;color:${BRAND.white};">
-      ${greeting}
-    </p>
-    <p style="margin:0 0 22px;font-size:15px;color:${BRAND.muted};">
-      ${welcome}
-    </p>
+    <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:${BRAND.white};">${greeting}</p>
+    <p style="margin:0 0 14px;font-size:13px;color:${BRAND.muted};">${welcome}</p>
 
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;background:${BRAND.soft};border:1px solid ${BRAND.border};border-radius:14px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;background:${BRAND.soft};border:1px solid ${BRAND.border};border-radius:10px;">
       <tr>
-        <td style="padding:20px 20px 18px;">
-          <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:${BRAND.pink};">
-            Event
-          </p>
-          <p style="margin:0 0 ${brief || metaRows ? '10' : '0'}px;font-size:20px;font-weight:700;line-height:1.3;color:${BRAND.white};">
+        <td style="padding:12px 14px;">
+          <p style="margin:0 0 2px;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.pink};">Event</p>
+          <p style="margin:0 0 ${brief || metaBits.length ? '6' : '0'}px;font-size:16px;font-weight:700;line-height:1.25;color:${BRAND.white};">
             ${escapeHtml(eventTitle || 'FUSE Event')}
           </p>
           ${
             brief
-              ? `<p style="margin:0 0 ${metaRows ? '14' : '0'}px;font-size:14px;line-height:1.55;color:${BRAND.muted};">${escapeHtml(brief)}</p>`
+              ? `<p style="margin:0 0 ${metaBits.length ? '8' : '0'}px;font-size:12px;line-height:1.4;color:${BRAND.muted};">${escapeHtml(brief)}</p>`
               : ''
           }
           ${
-            metaRows
-              ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${BRAND.border};padding-top:4px;">${metaRows}</table>`
+            metaBits.length
+              ? `<p style="margin:0;font-size:12px;line-height:1.5;color:${BRAND.white};">${metaBits.join('<br/>')}</p>`
               : ''
           }
         </td>
       </tr>
     </table>
 
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;background:${BRAND.bg};border:1px solid ${BRAND.border};border-radius:14px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;background:${BRAND.bg};border:1px solid ${BRAND.border};border-radius:10px;">
       <tr>
-        <td style="padding:18px 20px;">
-          <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:${BRAND.cyan};">
-            Your tickets
-          </p>
-          <p style="margin:0 0 8px;font-size:15px;font-weight:700;color:${BRAND.white};">
-            ${count} printable PDF ticket${count > 1 ? 's' : ''} attached
-          </p>
-          <p style="margin:0;font-size:13px;line-height:1.5;color:${BRAND.muted};">
-            Open the PDF attachment${count > 1 ? 's' : ''} in this email to view your QR code${count > 1 ? 's' : ''} and ticket details. Present the QR at the entrance, or show the written ticket code if needed.
+        <td style="padding:12px 14px;">
+          <p style="margin:0 0 2px;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.cyan};">Tickets</p>
+          <p style="margin:0;font-size:13px;color:${BRAND.white};">
+            <strong>${count} PDF ticket${count > 1 ? 's' : ''}</strong> attached - open to show your QR at the door.
           </p>
         </td>
       </tr>
@@ -206,31 +180,22 @@ export function buildTicketsEmail({
 
     ${
       termsHtml
-        ? `<p style="margin:0 0 10px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:${BRAND.pink};">
-            Terms &amp; conditions
-          </p>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;background:${BRAND.soft};border:1px solid ${BRAND.border};border-radius:14px;">
-            <tr>
-              <td style="padding:16px 18px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.55;color:${BRAND.muted};">
-                ${termsHtml}
-              </td>
-            </tr>
-          </table>
-          <p style="margin:0 0 8px;font-size:12px;color:${BRAND.muted};">
-            By attending, you agree to these terms. Full details are also on
-            <a href="${escapeHtml(origin)}/about#terms" style="color:${BRAND.cyan};text-decoration:none;">fuseevents.net</a>.
+        ? `<p style="margin:0 0 6px;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.pink};">Terms</p>
+          <p style="margin:0 0 8px;font-size:11px;line-height:1.4;color:${BRAND.muted};">${termsHtml}</p>
+          <p style="margin:0 0 10px;font-size:11px;color:${BRAND.muted};">
+            Full terms:
+            <a href="${escapeHtml(origin)}/about#terms" style="color:${BRAND.cyan};text-decoration:none;">fuseevents.net/about</a>
           </p>`
         : ''
     }
 
-    <p style="margin:18px 0 0;font-size:13px;color:${BRAND.muted};">
-      See you on the night.<br/>
-      <span style="color:${BRAND.white};font-weight:700;">The FUSE team</span>
+    <p style="margin:0;font-size:12px;color:${BRAND.muted};">
+      See you there - <span style="color:${BRAND.white};font-weight:700;">FUSE</span>
     </p>
   `;
 
   const html = shell({
-    preheader: `${eventTitle} - your tickets are attached as PDF`,
+    preheader: `${eventTitle} - PDF tickets attached`,
     title,
     bodyHtml,
     siteUrl: origin,
@@ -241,14 +206,13 @@ export function buildTicketsEmail({
     welcome,
     '',
     `Event: ${eventTitle || 'FUSE Event'}`,
-    brief ? brief : '',
+    brief || '',
     when ? `When: ${when}` : '',
     place ? `Where: ${place}` : '',
     '',
-    `${count} printable PDF ticket(s) are attached to this email.`,
+    `${count} PDF ticket(s) attached.`,
     '',
-    termsAndConditions ? `Terms & Conditions\n${String(termsAndConditions).trim()}` : '',
-    '',
+    termsAndConditions ? `Terms: see ${origin}/about#terms` : '',
     origin,
   ]
     .filter(Boolean)
@@ -259,14 +223,12 @@ export function buildTicketsEmail({
 
 export function buildContactNotifyEmail({ name, email, phone, message, siteUrl }) {
   const bodyHtml = `
-    <p style="margin:0 0 8px;font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.cyan};">New website message</p>
-    <p style="margin:0 0 18px;font-size:18px;font-weight:700;color:${BRAND.white};">Contact form</p>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;margin:0 0 18px;">
-      <tr><td style="padding:4px 0;color:${BRAND.muted};width:72px;">Name</td><td style="padding:4px 0;color:${BRAND.text};">${escapeHtml(name)}</td></tr>
-      <tr><td style="padding:4px 0;color:${BRAND.muted};">Email</td><td style="padding:4px 0;"><a href="mailto:${escapeHtml(email)}" style="color:${BRAND.cyan};text-decoration:none;">${escapeHtml(email)}</a></td></tr>
-      ${phone ? `<tr><td style="padding:4px 0;color:${BRAND.muted};">Phone</td><td style="padding:4px 0;color:${BRAND.text};">${escapeHtml(phone)}</td></tr>` : ''}
-    </table>
-    <div style="padding:14px 16px;background:${BRAND.bg};border:1px solid ${BRAND.border};border-radius:10px;color:${BRAND.text};white-space:pre-wrap;">${escapeHtml(message)}</div>
+    <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.cyan};">New message</p>
+    <p style="margin:0 0 12px;font-size:16px;font-weight:700;color:${BRAND.white};">Contact form</p>
+    <p style="margin:0 0 4px;font-size:13px;color:${BRAND.muted};">Name: <span style="color:${BRAND.text};">${escapeHtml(name)}</span></p>
+    <p style="margin:0 0 4px;font-size:13px;color:${BRAND.muted};">Email: <a href="mailto:${escapeHtml(email)}" style="color:${BRAND.cyan};text-decoration:none;">${escapeHtml(email)}</a></p>
+    ${phone ? `<p style="margin:0 0 10px;font-size:13px;color:${BRAND.muted};">Phone: <span style="color:${BRAND.text};">${escapeHtml(phone)}</span></p>` : ''}
+    <div style="padding:10px 12px;background:${BRAND.bg};border:1px solid ${BRAND.border};border-radius:8px;color:${BRAND.text};font-size:13px;white-space:pre-wrap;">${escapeHtml(message)}</div>
   `;
 
   return {
@@ -283,14 +245,11 @@ export function buildContactNotifyEmail({ name, email, phone, message, siteUrl }
 
 export function buildContactAckEmail({ name, siteUrl }) {
   const bodyHtml = `
-    <p style="margin:0 0 16px;font-size:18px;font-weight:700;color:${BRAND.white};">
+    <p style="margin:0 0 10px;font-size:16px;font-weight:700;color:${BRAND.white};">
       Thanks${name ? `, ${escapeHtml(name)}` : ''}
     </p>
-    <p style="margin:0 0 12px;color:${BRAND.muted};">
-      We received your message and will get back to you soon.
-    </p>
-    <p style="margin:0;color:${BRAND.muted};">
-      - The FUSE team
+    <p style="margin:0;font-size:13px;color:${BRAND.muted};">
+      We got your message and will reply soon. - FUSE
     </p>
   `;
 
@@ -302,6 +261,6 @@ export function buildContactAckEmail({ name, siteUrl }) {
       bodyHtml,
       siteUrl,
     }),
-    text: `Thanks${name ? `, ${name}` : ''}. We received your message and will get back to you soon.\n\n- FUSE Events\n${siteUrl}`,
+    text: `Thanks${name ? `, ${name}` : ''}. We received your message.\n\n- FUSE Events\n${siteUrl}`,
   };
 }

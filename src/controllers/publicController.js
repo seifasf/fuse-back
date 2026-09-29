@@ -3,6 +3,7 @@ import { TicketTier } from '../models/TicketTier.js';
 import { Character } from '../models/Character.js';
 import { SiteContent } from '../models/SiteContent.js';
 import { ContactMessage } from '../models/ContactMessage.js';
+import { SeatMap } from '../models/SeatMap.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
@@ -68,7 +69,7 @@ export const getEvent = asyncHandler(async (req, res) => {
     : await Event.findOne({ slug, ...publicVisible }).lean();
   if (!event) return res.status(404).json({ code: 'NOT_FOUND', message: 'Event not found' });
 
-  const [tiers, characters, terms] = await Promise.all([
+  const [rawTiers, characters, terms, seatMap] = await Promise.all([
     TicketTier.find({ eventId: event._id, isActive: true })
       .sort({ sortOrder: 1, price: 1 })
       .select('name color price currency quantity sold maxPerOrder sortOrder eventId isActive')
@@ -79,9 +80,15 @@ export const getEvent = asyncHandler(async (req, res) => {
           .lean()
       : Promise.resolve([]),
     resolveTerms(event.termsAndConditions),
+    SeatMap.findOne({ eventId: event._id, status: 'published' }).select('tiers.tierId').lean(),
   ]);
 
-  const payload = { event, tiers, characters, terms };
+  const seatedIds = new Set((seatMap?.tiers || []).map((t) => String(t.tierId)).filter(Boolean));
+  const tiers = seatMap
+    ? rawTiers.map((t) => (seatedIds.has(String(t._id)) ? { ...t, seated: true } : t))
+    : rawTiers;
+
+  const payload = { event, tiers, characters, terms, hasSeatMap: Boolean(seatMap) };
   cacheSet(cacheKey, payload, 12_000);
   res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
   res.set('X-Cache', 'MISS');

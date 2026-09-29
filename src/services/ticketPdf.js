@@ -46,7 +46,7 @@ function safeFilename(code) {
 }
 
 /**
- * Printable FUSE ticket PDF — same layout as the website jsPDF download
+ * Printable FUSE ticket PDF - same layout as the website jsPDF download
  * (105 x 160 mm: black logo header, event, tier, QR, code box, footer).
  */
 export async function buildTicketPdfBuffer(ticket) {
@@ -55,8 +55,13 @@ export async function buildTicketPdfBuffer(ticket) {
   const tierName = toPdfText(ticket.tierName);
   const code = toPdfText(ticket.code, 'TICKET') || 'TICKET';
   const admitCount = Math.max(1, Number(ticket.admitCount) || ticket.members?.length || 1);
+  const seats = (ticket.seats || []).map((s) => toPdfText(s)).filter(Boolean);
   const memberLines = (ticket.members || [])
-    .map((m) => toPdfText(m.name))
+    .map((m) => {
+      const name = toPdfText(m.name);
+      const seat = toPdfText(m.seat);
+      return name && seat ? `${name}  -  ${seat}` : name;
+    })
     .filter(Boolean)
     .slice(0, 12);
 
@@ -155,6 +160,15 @@ export async function buildTicketPdfBuffer(ticket) {
     y += mm(6);
   }
 
+  if (seats.length) {
+    const seatLine = `Tier: ${tierName || '-'}, ${seats.length > 1 ? 'Seats' : 'Seat'}: ${seats.join(', ')}`;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#0a0a0f');
+    const seatH = doc.heightOfString(seatLine, { width: pageW - margin * 2, align: 'center' });
+    doc.text(seatLine, margin, y - mm(3), { width: pageW - margin * 2, align: 'center' });
+    y += Math.max(mm(5), seatH + mm(1.5));
+    doc.font('Helvetica').fillColor('#50505f');
+  }
+
   if (memberLines.length) {
     doc.fontSize(8);
     for (const line of memberLines) {
@@ -186,7 +200,7 @@ export async function buildTicketPdfBuffer(ticket) {
   doc.image(qrPng, qrX, y, { width: qrSize, height: qrSize });
   y += qrSize + mm(10);
 
-  // Ticket code box — 18 mm tall, 3 mm radius
+  // Ticket code box - 18 mm tall, 3 mm radius
   doc.roundedRect(margin, y, pageW - margin * 2, mm(18), mm(3)).fill('#f6f8fb');
   doc.fillColor('#0a0a0f').font('Helvetica-Bold').fontSize(13);
   doc.text(code, margin, y + mm(11.5) - mm(4.5), {
