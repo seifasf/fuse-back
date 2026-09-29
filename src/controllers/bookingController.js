@@ -12,6 +12,7 @@ import { env } from '../config/env.js';
 import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import { cacheDel } from '../utils/memoryCache.js';
+import { stepTimer } from '../utils/stepTimer.js';
 import { sendTicketsEmail, isEmailConfigured } from '../services/email/index.js';
 import mongoose from 'mongoose';
 import { SeatMap } from '../models/SeatMap.js';
@@ -190,9 +191,51 @@ export const createBooking = asyncHandler(async (req, res) => {
   res.status(201).json({ booking, paymentUrl });
 });
 
+/**
+ * Emails go out after the response so a slow PDF build or Brevo call never blocks checkout.
+ * In-process only: if the server restarts mid-send, emailSentAt stays empty and the next
+ * confirm call for that booking (e.g. reopening the confirmation page) sends it again.
+ */
+const emailsInFlight = new Set();
+
+function sendBookingEmailInBackground(booking, tickets) {
+  const key = String(booking._id);
+  if (booking.emailSentAt || emailsInFlight.has(key) || !tickets.length) return false;
+  if (!isEmailConfigured()) {
+    console.log('[email] Booking confirmed - Brevo not configured yet (mock).');
+    return false;
+  }
+
+  emailsInFlight.add(key);
+  const eventDoc = booking.eventId && typeof booking.eventId === 'object' ? booking.eventId : null;
+  const started = Date.now();
+  sendTicketsEmail({
+    toEmail: booking.guest.email,
+    toName: booking.guest.name,
+    eventTitle: tickets[0]?.eventTitle || eventDoc?.title || booking.eventSnapshot?.title,
+    eventDescription: eventDoc?.description,
+    venue: eventDoc?.venue || booking.eventSnapshot?.venue,
+    startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
+    termsAndConditions: eventDoc?.termsAndConditions,
+    tickets,
+    complimentary: booking.paymentProvider === 'manual',
+  })
+    .then(async (mail) => {
+      console.log(
+        `[timing] email ${key} ${mail.sent ? 'sent' : `not sent (${mail.error || 'unknown'})`} in ${Date.now() - started}ms`
+      );
+      if (mail.sent) await Booking.updateOne({ _id: booking._id }, { $set: { emailSentAt: new Date() } });
+    })
+    .catch((err) => console.error('[email] background send failed:', err?.message || err))
+    .finally(() => emailsInFlight.delete(key));
+  return true;
+}
+
 export const confirmPayment = asyncHandler(async (req, res) => {
   const { bookingId } = req.params;
+  const timer = stepTimer(`confirm ${bookingId}`);
   const booking = await Booking.findById(bookingId).populate('eventId');
+  timer.mark('load');
   if (!booking) throw new AppError('Booking not found', 404, 'NOT_FOUND');
 
   const formatTickets = async (ticketDocs) => {
@@ -226,27 +269,11 @@ export const confirmPayment = asyncHandler(async (req, res) => {
     const existing = await Ticket.find({ bookingId });
     const formatted = await formatTickets(existing);
 
-    // Retry email if it never went out (e.g. Brevo was added later)
-    let emailSent = Boolean(booking.emailSentAt);
-    if (retryEmail && !emailSent && isEmailConfigured() && existing.length) {
-      const eventDoc = booking.eventId;
-      const mail = await sendTicketsEmail({
-        toEmail: booking.guest.email,
-        toName: booking.guest.name,
-        eventTitle: existing[0]?.eventTitle || eventDoc?.title || booking.eventSnapshot?.title,
-        eventDescription: eventDoc?.description,
-        venue: eventDoc?.venue || booking.eventSnapshot?.venue,
-        startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
-        termsAndConditions: eventDoc?.termsAndConditions,
-        tickets: existing,
-        complimentary: booking.paymentProvider === 'manual',
-      });
-      if (mail.sent) {
-        booking.emailSentAt = new Date();
-        await booking.save();
-        emailSent = true;
-      }
-    }
+    // Retry email if it never went out (e.g. Brevo was added later, or the server restarted mid-send)
+    const emailQueued = retryEmail ? sendBookingEmailInBackground(booking, existing) : false;
+    const emailSent =
+      Boolean(booking.emailSentAt) || emailQueued || emailsInFlight.has(String(booking._id));
+    timer.done('already-paid');
 
     return res.json({
       booking,
@@ -267,6 +294,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
     const seatMap = await SeatMap.findOne({ eventId: booking.eventId?._id || booking.eventId }).lean();
     if (!seatMap) throw new AppError('The seat map for this event is no longer available', 409, 'SEAT_UNAVAILABLE');
     await finalizeBookingSeats(booking, seatMap);
+    timer.mark('seats');
   }
 
   // Only one concurrent confirm may issue tickets; the others wait for them and return them.
@@ -275,6 +303,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
     { _id: booking._id, status: 'pending' },
     { $set: { status: 'paid', paidAt } }
   );
+  timer.mark('claim');
   if (!claimed.modifiedCount) {
     for (let i = 0; i < 40; i += 1) {
       if ((await Ticket.countDocuments({ bookingId: booking._id })) >= booking.items.length) break;
@@ -287,7 +316,6 @@ export const confirmPayment = asyncHandler(async (req, res) => {
 
   booking.status = 'paid';
   booking.paidAt = paidAt;
-  await booking.save();
 
   const eventDoc = booking.eventId;
   const eventId = eventDoc._id || eventDoc;
@@ -312,12 +340,14 @@ export const confirmPayment = asyncHandler(async (req, res) => {
     const holderName = members.map((m) => m.name).filter(Boolean).join(', ') || booking.guest.name;
     const holderPhone = members[0]?.phone || booking.guest.phone || '';
 
+    const ticketId = new mongoose.Types.ObjectId();
     const ticket = await Ticket.create({
+      _id: ticketId,
       bookingId: booking._id,
       eventId,
       tierId: item.tierId,
       code: generateTicketCode(),
-      qrPayload: `pending_${booking._id}_${Date.now()}_${item.tierId}`,
+      qrPayload: getQrPayload(ticketId, booking._id, eventId),
       holderName: holderName.slice(0, 120),
       holderEmail: booking.guest.email,
       holderPhone: holderPhone.slice(0, 32),
@@ -328,45 +358,30 @@ export const confirmPayment = asyncHandler(async (req, res) => {
       tierColor: normalizeHexColor(item.tierColor || colorForTierName(item.tierName)),
       eventTitle,
     });
-
-    const qrPayload = getQrPayload(ticket._id, booking._id, eventId);
-    ticket.qrPayload = qrPayload;
-    await ticket.save();
     tickets.push(ticket);
-
-    await TicketTier.findByIdAndUpdate(item.tierId, { $inc: { sold: item.qty } });
   }
+  timer.mark('tickets');
 
-  await Event.findByIdAndUpdate(eventId, { $inc: { ticketsSold: booking.ticketCount } });
-  await booking.save();
+  await Promise.all([
+    ...booking.items.map((item) =>
+      TicketTier.updateOne({ _id: item.tierId }, { $inc: { sold: item.qty } })
+    ),
+    Event.updateOne({ _id: eventId }, { $inc: { ticketsSold: booking.ticketCount } }),
+  ]);
   cacheDel('public:');
   cacheDel('analytics:');
+  timer.mark('counters');
 
-  let emailSent = false;
-  const mail = await sendTicketsEmail({
-    toEmail: booking.guest.email,
-    toName: booking.guest.name,
-    eventTitle,
-    eventDescription: eventDoc?.description,
-    venue: eventDoc?.venue || booking.eventSnapshot?.venue,
-    startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
-    termsAndConditions: eventDoc?.termsAndConditions,
-    tickets,
-    complimentary: false,
-  });
-  if (mail.sent) {
-    booking.emailSentAt = new Date();
-    await booking.save();
-    emailSent = true;
-  } else if (mail.mock) {
-    console.log('[email] Booking confirmed — Brevo not configured yet (mock).');
-  }
+  const emailQueued = sendBookingEmailInBackground(booking, tickets);
+  const formatted = await formatTickets(tickets);
+  timer.mark('qr');
+  timer.done(`tickets=${tickets.length} email=${emailQueued ? 'queued' : 'skipped'}`);
 
   res.json({
     booking,
-    tickets: await formatTickets(tickets),
-    delivery: emailSent ? 'email+download' : 'download',
-    emailSent,
+    tickets: formatted,
+    delivery: emailQueued ? 'email+download' : 'download',
+    emailSent: emailQueued,
   });
 });
 

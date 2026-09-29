@@ -1,5 +1,7 @@
 import { env } from '../../config/env.js';
 
+const BREVO_TIMEOUT_MS = 20_000;
+
 /**
  * Low-level Brevo transactional send.
  * Docs: https://developers.brevo.com/reference/sendtransacemail
@@ -66,15 +68,24 @@ export async function sendBrevoEmail({
     ...(tags.length ? { tags: tags.slice(0, 10) } : {}),
   };
 
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-      'api-key': env.email.apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'api-key': env.email.apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(BREVO_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    const message = timedOut ? `Brevo did not respond within ${BREVO_TIMEOUT_MS / 1000}s` : String(err?.message || err);
+    console.error('[email] Brevo request failed:', message);
+    return { sent: false, error: message };
+  }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
