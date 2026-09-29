@@ -1,8 +1,13 @@
 import sharp from 'sharp';
-import { cacheGet, cacheSet } from './memoryCache.js';
 
 const MAX_UPLOAD_EDGE = 1600;
 const MAX_SERVE_EDGE = 2000;
+
+/** Media bytes never change for an id, so keep them long - but cap memory (any ?w= makes a new entry). */
+const MEDIA_CACHE_TTL_MS = 24 * 60 * 60_000;
+const MEDIA_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const mediaCache = new Map();
+let mediaCacheBytes = 0;
 
 /**
  * Compress uploads for the public site (WebP when possible, max edge 1600).
@@ -60,10 +65,43 @@ export function mediaCacheKey(id, width) {
   return `media:${id}:w${width || 'full'}`;
 }
 
-export function getCachedMedia(id, width) {
-  return cacheGet(mediaCacheKey(id, width));
+function dropMediaEntry(key, entry) {
+  mediaCache.delete(key);
+  mediaCacheBytes -= entry.bytes;
 }
 
-export function setCachedMedia(id, width, value, ttlMs = 10 * 60_000) {
-  return cacheSet(mediaCacheKey(id, width), value, ttlMs);
+export function getCachedMedia(id, width) {
+  const key = mediaCacheKey(id, width);
+  const entry = mediaCache.get(key);
+  if (!entry) return undefined;
+  if (entry.expires <= Date.now()) {
+    dropMediaEntry(key, entry);
+    return undefined;
+  }
+  // Re-insert so Map order doubles as least-recently-used order for eviction.
+  mediaCache.delete(key);
+  mediaCache.set(key, entry);
+  return entry.value;
+}
+
+export function setCachedMedia(id, width, value, ttlMs = MEDIA_CACHE_TTL_MS) {
+  const key = mediaCacheKey(id, width);
+  const bytes = value?.buffer?.length || 0;
+  if (bytes > MEDIA_CACHE_MAX_BYTES) return value;
+  const previous = mediaCache.get(key);
+  if (previous) dropMediaEntry(key, previous);
+  mediaCache.set(key, { value, bytes, expires: Date.now() + ttlMs });
+  mediaCacheBytes += bytes;
+  for (const [oldKey, entry] of mediaCache) {
+    if (mediaCacheBytes <= MEDIA_CACHE_MAX_BYTES) break;
+    dropMediaEntry(oldKey, entry);
+  }
+  return value;
+}
+
+export function dropCachedMedia(id) {
+  const prefix = `media:${id}:`;
+  for (const [key, entry] of mediaCache) {
+    if (key.startsWith(prefix)) dropMediaEntry(key, entry);
+  }
 }

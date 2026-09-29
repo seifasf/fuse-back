@@ -4,6 +4,7 @@ import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
 import {
+  dropCachedMedia,
   getCachedMedia,
   optimizeUploadBuffer,
   resizeMediaBuffer,
@@ -113,5 +114,6 @@ export const getMedia = asyncHandler(async (req, res) => {
 export const deleteMedia = asyncHandler(async (req, res) => {
   const deleted = await Media.findByIdAndDelete(req.params.id);
   if (!deleted) throw new AppError('Image not found', 404, 'NOT_FOUND');
+  dropCachedMedia(req.params.id);
   res.json({ deleted: true });
 });

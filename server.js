@@ -73,6 +73,8 @@ app.use(
       return callback(new Error('CORS access denied: origin not allowed'));
     },
     credentials: true,
+    // Let browsers reuse preflight answers (Chrome caps this at 2h) instead of re-asking every 5s.
+    maxAge: 7200,
   })
 );
 
