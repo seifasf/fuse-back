@@ -146,8 +146,7 @@ export async function buildTicketPdfBuffer(ticket) {
   const M = 9;
   const CW = W - M * 2;
   const HEADER = 28;
-  const tierRgb = hexToRgb(colorForTierName(ticket.tierName, ticket.tierColor));
-  const tierFill = `rgb(${tierRgb.r},${tierRgb.g},${tierRgb.b})`;
+  const tierFill = normalizeHexColor(colorForTierName(ticket.tierName, ticket.tierColor));
 
   const doc = new PDFDocument({
     size: [mm(W), mm(H)],
@@ -170,8 +169,9 @@ export async function buildTicketPdfBuffer(ticket) {
     doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color);
   };
   const measure = (s) => doc.widthOfString(s) / MM;
+  // Centered by hand (no width option) so pdfkit never re-wraps a line or adds a page.
   const center = (s, y) => {
-    doc.text(s, mm(M), mm(y), { width: mm(CW), align: 'center', lineBreak: false });
+    doc.text(s, mm((W - measure(s)) / 2), mm(y), { lineBreak: false });
   };
 
   doc.rect(0, 0, mm(W), mm(H)).fill('#ffffff');
@@ -232,7 +232,7 @@ export async function buildTicketPdfBuffer(ticket) {
   if (seats.length) {
     setFont(true, 9.5, '#0a0a0f');
     const seatLine = `Tier: ${tierName || '-'}, ${seats.length > 1 ? 'Seats' : 'Seat'}: ${seats.join(', ')}`;
-    for (const line of wrapText(seatLine, CW, measure, 2)) {
+    for (const line of wrapText(seatLine, CW, measure, 3)) {
       center(line, y);
       y += 4.2;
     }
