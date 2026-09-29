@@ -39,15 +39,6 @@ function toPdfText(value, fallback = '') {
     .trim();
 }
 
-function hexToRgb(hex) {
-  const h = normalizeHexColor(hex).replace('#', '');
-  return {
-    r: parseInt(h.slice(0, 2), 16),
-    g: parseInt(h.slice(2, 4), 16),
-    b: parseInt(h.slice(4, 6), 16),
-  };
-}
-
 function safeFilename(code) {
   return toPdfText(code, 'ticket').replace(/[^\w.-]+/g, '_') || 'ticket';
 }
