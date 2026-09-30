@@ -11,6 +11,26 @@ const rectSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const seatRowSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, maxlength: 4 },
+    seats: { type: Number, required: true, min: 1 },
+  },
+  { _id: false }
+);
+
+/** Row name drawn at one end of a row. */
+const rowLabelSchema = new mongoose.Schema(
+  {
+    tierKey: { type: String, required: true },
+    text: { type: String, required: true },
+    x: { type: Number, required: true },
+    y: { type: Number, required: true },
+    size: { type: Number, required: true },
+  },
+  { _id: false }
+);
+
 const seatMapTierSchema = new mongoose.Schema(
   {
     /** Client-generated stable id; seats reference their tier by this key. */
@@ -23,6 +43,8 @@ const seatMapTierSchema = new mongoose.Schema(
     color: { type: String, default: '#2563EB', maxlength: 7 },
     price: { type: Number, required: true, min: 0 },
     seatCount: { type: Number, required: true, min: 1 },
+    /** Named rows, top to bottom (seats VIP-A-1...). Empty = auto grid (VIP-1...). */
+    rows: { type: [seatRowSchema], default: [] },
     zone: { type: rectSchema, required: true },
   },
   { _id: false }
@@ -69,6 +91,7 @@ const seatMapSchema = new mongoose.Schema(
       default: [],
       validate: [(arr) => arr.length <= 5000, 'Max 5000 seats per seat map'],
     },
+    rowLabels: { type: [rowLabelSchema], default: [] },
     publishedAt: { type: Date },
   },
   { timestamps: true }

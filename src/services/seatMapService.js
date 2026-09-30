@@ -12,9 +12,12 @@ import {
   MAX_SEATS_PER_TIER,
   MAX_SEATS_TOTAL,
   MIN_SEAT_RADIUS,
+  MAX_ROWS_PER_TIER,
+  MAX_SEATS_PER_ROW,
   tierPrefix,
+  normalizeRowName,
   isRectInsideCanvas,
-  generateSeats,
+  generateSeatLayout,
 } from './seatLayout.js';
 
 export const SEAT_HOLD_MS = 10 * 60 * 1000;
@@ -77,7 +80,8 @@ export function buildSeatMap(body = {}) {
     }
     prefixes.set(prefix, name);
 
-    const seatCount = Number(t?.seatCount);
+    const rows = parseRows(t?.rows, name);
+    const seatCount = rows.length ? rows.reduce((sum, r) => sum + r.seats, 0) : Number(t?.seatCount);
     if (!Number.isInteger(seatCount) || seatCount < 1) {
       fail(`"${name}": number of seats must be a whole number above 0`);
     }
@@ -99,6 +103,7 @@ export function buildSeatMap(body = {}) {
       color: normalizeHexColor(t?.color),
       price: Math.round(price * 1000) / 1000,
       seatCount,
+      rows,
       zone: toRect(t?.zone, `"${name}" zone`),
     };
   });
@@ -106,7 +111,7 @@ export function buildSeatMap(body = {}) {
   const totalSeats = tiers.reduce((sum, t) => sum + t.seatCount, 0);
   if (totalSeats > MAX_SEATS_TOTAL) fail(`Max ${MAX_SEATS_TOTAL} seats per seat map`);
 
-  const seats = generateSeats(tiers);
+  const { seats, rowLabels } = generateSeatLayout(tiers);
   for (const tier of tiers) {
     const first = seats.find((s) => s.tierKey === tier.key);
     if (first && first.r < MIN_SEAT_RADIUS) {
@@ -127,8 +132,29 @@ export function buildSeatMap(body = {}) {
     stage,
     tiers,
     seats,
+    rowLabels,
     maxSeatsPerOrder,
   };
+}
+
+/** Optional named rows for a tier. An empty list means the tier uses the auto grid. */
+function parseRows(raw, tierName) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) fail(`"${tierName}": rows must be a list`);
+  if (raw.length > MAX_ROWS_PER_TIER) fail(`"${tierName}": max ${MAX_ROWS_PER_TIER} rows per tier`);
+  const names = new Set();
+  return raw.map((r, idx) => {
+    const name = normalizeRowName(r?.name);
+    if (!name) fail(`"${tierName}": row ${idx + 1} needs a name (letters or numbers)`);
+    if (names.has(name)) fail(`"${tierName}": row name "${name}" is used twice`);
+    names.add(name);
+    const seats = Number(r?.seats);
+    if (!Number.isInteger(seats) || seats < 1) {
+      fail(`"${tierName}": row ${name} needs a whole number of seats above 0`);
+    }
+    if (seats > MAX_SEATS_PER_ROW) fail(`"${tierName}": max ${MAX_SEATS_PER_ROW} seats per row`);
+    return { name, seats };
+  });
 }
 
 /** Sold seats must keep their label and tier; otherwise the change is rejected. */

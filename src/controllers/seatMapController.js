@@ -63,6 +63,7 @@ export const adminSaveSeatMap = asyncHandler(async (req, res) => {
   doc.maxSeatsPerOrder = built.maxSeatsPerOrder;
   doc.tiers = built.tiers;
   doc.seats = built.seats;
+  doc.rowLabels = built.rowLabels;
 
   if (publish) {
     await syncSeatMapTiers(event, doc, previousTiers);
@@ -119,6 +120,7 @@ function publicSeatMapPayload(map, tiers) {
       };
     }),
     seats: map.seats,
+    rowLabels: map.rowLabels || [],
   };
 }
 
