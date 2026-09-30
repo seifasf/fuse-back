@@ -20,7 +20,10 @@ import {
   generateSeatLayout,
 } from './seatLayout.js';
 
-export const SEAT_HOLD_MS = 10 * 60 * 1000;
+/** How long picked seats stay reserved while the guest is choosing seats and filling in details. */
+export const SEAT_HOLD_MS = 2 * 60 * 1000;
+/** Once a booking is created the guest is on the payment page, so seats must outlast the payment step. */
+export const SEAT_PAYMENT_HOLD_MS = 10 * 60 * 1000;
 
 function fail(message, code = 'VALIDATION_ERROR', details = null, status = 400) {
   throw new AppError(message, status, code, details);
@@ -306,7 +309,7 @@ function seatIndexesReady() {
   return SeatReservation.init();
 }
 
-export async function holdSeats({ eventId, map, labels, holdToken, bookingId = null }) {
+export async function holdSeats({ eventId, map, labels, holdToken, bookingId = null, holdMs = SEAT_HOLD_MS }) {
   await seatIndexesReady();
   const wanted = uniqueLabels(labels);
   if (wanted.length > map.maxSeatsPerOrder) {
@@ -319,7 +322,7 @@ export async function holdSeats({ eventId, map, labels, holdToken, bookingId = n
   const tierIdByKey = new Map(map.tiers.map((t) => [t.key, t.tierId || null]));
   const token = cleanToken(holdToken) || newHoldToken();
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + SEAT_HOLD_MS);
+  const expiresAt = new Date(now.getTime() + holdMs);
 
   await SeatReservation.deleteMany({
     eventId,
@@ -418,7 +421,7 @@ function seatsTakenError(taken) {
 
 /** At checkout: hold exactly the booking's seats under its hold token, or fail with SEAT_TAKEN. */
 export async function claimSeatsForBooking({ eventId, map, labels, holdToken, bookingId }) {
-  const result = await holdSeats({ eventId, map, labels, holdToken, bookingId });
+  const result = await holdSeats({ eventId, map, labels, holdToken, bookingId, holdMs: SEAT_PAYMENT_HOLD_MS });
   if (result.taken.length) throw seatsTakenError(result.taken);
   return result;
 }
@@ -496,7 +499,7 @@ export async function finalizeBookingSeats(booking, map) {
   if (taken.length) {
     await SeatReservation.updateMany(
       { eventId, bookingId: booking._id, label: { $in: converted } },
-      { $set: { status: 'held', expiresAt: new Date(now.getTime() + SEAT_HOLD_MS) } }
+      { $set: { status: 'held', expiresAt: new Date(now.getTime() + SEAT_PAYMENT_HOLD_MS) } }
     );
     throw seatsTakenError(taken);
   }
