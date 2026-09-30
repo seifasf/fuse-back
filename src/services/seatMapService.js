@@ -85,6 +85,9 @@ export function buildSeatMap(body = {}) {
 
     const rows = parseRows(t?.rows, name);
     const seatCount = rows.length ? rows.reduce((sum, r) => sum + r.seats, 0) : Number(t?.seatCount);
+    if (rows.length && t?.seatCount != null && Number(t.seatCount) !== seatCount) {
+      fail(`"${name}": the rows add up to ${seatCount} seats, but the tier total is ${t.seatCount}. Make them equal.`);
+    }
     if (!Number.isInteger(seatCount) || seatCount < 1) {
       fail(`"${name}": number of seats must be a whole number above 0`);
     }
