@@ -9,6 +9,7 @@ import { AppError } from '../utils/AppError.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { cacheGet, cacheSet } from '../utils/memoryCache.js';
 import { resolveTerms } from '../services/resolveTerms.js';
+import { isSeatedTier } from '../services/seatLayout.js';
 import { sendContactEmails } from '../services/email/index.js';
 
 const notDeleted = { deletedAt: null };
@@ -80,10 +81,14 @@ export const getEvent = asyncHandler(async (req, res) => {
           .lean()
       : Promise.resolve([]),
     resolveTerms(event.termsAndConditions),
-    SeatMap.findOne({ eventId: event._id, status: 'published' }).select('tiers.tierId').lean(),
+    SeatMap.findOne({ eventId: event._id, status: 'published' }).select('tiers.tierId tiers.seated').lean(),
   ]);
 
-  const seatedIds = new Set((seatMap?.tiers || []).map((t) => String(t.tierId)).filter(Boolean));
+  const seatedIds = new Set(
+    (seatMap?.tiers || [])
+      .filter((t) => t.tierId && isSeatedTier(t))
+      .map((t) => String(t.tierId))
+  );
   const tiers = seatMap
     ? rawTiers.map((t) => (seatedIds.has(String(t._id)) ? { ...t, seated: true } : t))
     : rawTiers;

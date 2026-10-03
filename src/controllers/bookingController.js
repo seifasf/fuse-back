@@ -21,6 +21,7 @@ import {
   finalizeBookingSeats,
   releaseBookingSeats,
 } from '../services/seatMapService.js';
+import { isSeatedTier } from '../services/seatLayout.js';
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider, acceptedTerms, holdToken } = req.body;
@@ -50,7 +51,7 @@ export const createBooking = asyncHandler(async (req, res) => {
 
   const seatMap = await SeatMap.findOne({ eventId: event._id, status: 'published' }).lean();
   const seatedTierByTierId = new Map(
-    (seatMap?.tiers || []).filter((t) => t.tierId).map((t) => [String(t.tierId), t])
+    (seatMap?.tiers || []).filter((t) => t.tierId && isSeatedTier(t)).map((t) => [String(t.tierId), t])
   );
   const seatByLabel = new Map((seatMap?.seats || []).map((s) => [s.label, s]));
   const allSeatLabels = [];

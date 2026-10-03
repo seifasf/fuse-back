@@ -9,10 +9,12 @@ import { cacheDel } from '../utils/memoryCache.js';
 import {
   buildSeatMap,
   assertSoldSeatsPreserved,
+  assertHeldSeatsPreserved,
   syncSeatMapTiers,
   holdSeats,
   getSeatAvailability,
 } from '../services/seatMapService.js';
+import { isSeatedTier } from '../services/seatLayout.js';
 
 async function findEventOr404(eventId) {
   if (!mongoose.isValidObjectId(eventId)) throw new AppError('Event not found', 404, 'NOT_FOUND');
@@ -25,6 +27,11 @@ async function findEventOr404(eventId) {
 
 export const adminGetSeatMap = asyncHandler(async (req, res) => {
   const event = await findEventOr404(req.params.eventId);
+  if (req.query.only === 'availability') {
+    const availability = await getSeatAvailability(event._id);
+    res.set('Cache-Control', 'no-store');
+    return res.json({ sold: availability.sold, held: availability.held });
+  }
   const [seatMap, tiers, availability] = await Promise.all([
     SeatMap.findOne({ eventId: event._id }).lean(),
     TicketTier.find({ eventId: event._id }).sort({ sortOrder: 1, price: 1 }).lean(),
@@ -52,6 +59,7 @@ export const adminSaveSeatMap = asyncHandler(async (req, res) => {
   }
 
   await assertSoldSeatsPreserved(event._id, built.seats);
+  await assertHeldSeatsPreserved(event._id, built.seats);
 
   const existing = await SeatMap.findOne({ eventId: event._id });
   const doc = existing || new SeatMap({ eventId: event._id });
@@ -107,6 +115,7 @@ function publicSeatMapPayload(map, tiers) {
     maxSeatsPerOrder: map.maxSeatsPerOrder,
     tiers: map.tiers.map((t) => {
       const linked = tierById.get(String(t.tierId));
+      const seated = isSeatedTier(t);
       return {
         key: t.key,
         tierId: t.tierId,
@@ -117,6 +126,10 @@ function publicSeatMapPayload(map, tiers) {
         currency: linked?.currency,
         maxPerOrder: linked?.maxPerOrder ?? map.maxSeatsPerOrder,
         orientation: t.orientation || 'horizontal',
+        seated,
+        ...(seated
+          ? {}
+          : { remaining: Math.max(0, (linked?.quantity ?? t.seatCount) - (linked?.sold || 0)) }),
         zone: t.zone,
       };
     }),
@@ -149,7 +162,7 @@ export const getPublicSeatMap = asyncHandler(async (req, res) => {
 
   const [tiers, availability] = await Promise.all([
     TicketTier.find({ _id: { $in: map.tiers.map((t) => t.tierId).filter(Boolean) } })
-      .select('name color price currency maxPerOrder')
+      .select('name color price currency maxPerOrder quantity sold')
       .lean(),
     getSeatAvailability(map.eventId, req.query.holdToken),
   ]);

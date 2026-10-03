@@ -20,7 +20,12 @@ import { sendTicketWhatsApp } from '../services/whatsapp.js';
 import { sendTicketsEmail } from '../services/email/index.js';
 import { cacheDel } from '../utils/memoryCache.js';
 import { SeatMap } from '../models/SeatMap.js';
-import { autoAssignSeats, releaseBookingSeats } from '../services/seatMapService.js';
+import {
+  assignChosenSeats,
+  releaseBookingSeats,
+  setSeatMapTierSeating,
+} from '../services/seatMapService.js';
+import { isSeatedTier } from '../services/seatLayout.js';
 
 /* ??? Events ??????????????????????????????????????????????? */
 
@@ -268,6 +273,7 @@ export const adminCreateTier = asyncHandler(async (req, res) => {
     name,
     color,
     quantity,
+    seated: req.body.seated !== false,
     eventId: req.params.eventId,
   });
   res.status(201).json({ tier });
@@ -300,6 +306,15 @@ export const adminUpdateTier = asyncHandler(async (req, res) => {
   if (data.quantity != null) {
     data.quantity = Math.max(1, Number(data.quantity) || 1);
     await assertTierFitsCapacity(req.params.eventId, data.quantity, req.params.tierId);
+  }
+  if (data.seated !== undefined) {
+    data.seated = data.seated !== false;
+    const [event, current] = await Promise.all([
+      Event.findOne({ _id: req.params.eventId, deletedAt: null }),
+      TicketTier.findOne({ _id: req.params.tierId, eventId: req.params.eventId }),
+    ]);
+    if (!event || !current) throw new AppError('Ticket tier not found', 404, 'NOT_FOUND');
+    if (await setSeatMapTierSeating(event, current, data.seated)) cacheDel('public:');
   }
   const tier = await TicketTier.findByIdAndUpdate(req.params.tierId, data, { new: true });
   res.json({ tier });
@@ -842,73 +857,85 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   const bookingId = new mongoose.Types.ObjectId();
   let seats = [];
   const seatMap = await SeatMap.findOne({ eventId: event._id, status: 'published' }).lean();
-  const seatedTier = seatMap?.tiers.find((t) => String(t.tierId) === String(tier._id));
+  const seatedTier = seatMap?.tiers.find((t) => String(t.tierId) === String(tier._id) && isSeatedTier(t));
+  const pickedSeats = Array.isArray(req.body.seats) ? req.body.seats : [];
   if (seatedTier) {
-    seats = await autoAssignSeats({
+    seats = await assignChosenSeats({
       eventId: event._id,
       map: seatMap,
       tierKey: seatedTier.key,
       tierId: tier._id,
+      labels: pickedSeats,
       qty: quantity,
       bookingId,
     });
     members = members.map((m, i) => ({ ...m, seat: seats[i] }));
+  } else if (pickedSeats.length) {
+    throw new AppError(`${tier.name} tickets don't have seat numbers`, 400, 'INVALID_SEAT');
   }
 
-  const booking = await Booking.create({
-    _id: bookingId,
-    guest: {
-      name: guestName,
-      email: guestEmail,
-      phone: guestPhone,
-    },
-    eventId,
-    eventSnapshot: {
-      title: event.title,
-      country: event.country,
-      startsAt: event.startsAt,
-      venue: event.venue,
-    },
-    items: [
-      {
-        tierId: tier._id,
-        tierName: tier.name,
-        tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
-        qty: quantity,
-        unitPrice: 0,
-        members,
-        seats,
+  let booking;
+  let ticket;
+  try {
+    booking = await Booking.create({
+      _id: bookingId,
+      guest: {
+        name: guestName,
+        email: guestEmail,
+        phone: guestPhone,
       },
-    ],
-    ticketCount: quantity,
-    total: 0,
-    currency,
-    status: 'paid',
-    paymentProvider: 'manual',
-    paymentRef: note ? `manual:${String(note).slice(0, 120)}` : 'manual',
-    paidAt: new Date(),
-  });
+      eventId,
+      eventSnapshot: {
+        title: event.title,
+        country: event.country,
+        startsAt: event.startsAt,
+        venue: event.venue,
+      },
+      items: [
+        {
+          tierId: tier._id,
+          tierName: tier.name,
+          tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
+          qty: quantity,
+          unitPrice: 0,
+          members,
+          seats,
+        },
+      ],
+      ticketCount: quantity,
+      total: 0,
+      currency,
+      status: 'paid',
+      paymentProvider: 'manual',
+      paymentRef: note ? `manual:${String(note).slice(0, 120)}` : 'manual',
+      paidAt: new Date(),
+    });
+
+    // One QR covers the full qty for this manual issue (same rule as checkout)
+    ticket = await Ticket.create({
+      bookingId: booking._id,
+      eventId: event._id,
+      tierId: tier._id,
+      code: generateTicketCode(),
+      qrPayload: `pending_${booking._id}_${Date.now()}`,
+      holderName: guestName,
+      holderEmail: guestEmail,
+      holderPhone: guestPhone === ' - ' ? '' : guestPhone,
+      members,
+      seats,
+      admitCount: quantity,
+      tierName: tier.name,
+      tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
+      eventTitle: event.title,
+    });
+  } catch (err) {
+    if (seats.length) await releaseBookingSeats(bookingId);
+    if (booking) await Booking.deleteOne({ _id: bookingId });
+    throw err;
+  }
 
   const tickets = [];
   const qrDataUrls = [];
-
-  // One QR covers the full qty for this manual issue (same rule as checkout)
-  const ticket = await Ticket.create({
-    bookingId: booking._id,
-    eventId: event._id,
-    tierId: tier._id,
-    code: generateTicketCode(),
-    qrPayload: `pending_${booking._id}_${Date.now()}`,
-    holderName: guestName,
-    holderEmail: guestEmail,
-    holderPhone: guestPhone === ' - ' ? '' : guestPhone,
-    members,
-    seats,
-    admitCount: quantity,
-    tierName: tier.name,
-    tierColor: normalizeHexColor(tier.color || colorForTierName(tier.name)),
-    eventTitle: event.title,
-  });
 
   const qrPayload = getQrPayload(ticket._id, booking._id, event._id);
   ticket.qrPayload = qrPayload;

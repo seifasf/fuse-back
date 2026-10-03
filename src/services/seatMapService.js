@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import mongoose from 'mongoose';
+import { SeatMap } from '../models/SeatMap.js';
 import { SeatReservation } from '../models/SeatReservation.js';
 import { TicketTier } from '../models/TicketTier.js';
 import { currencyForCountry } from '../models/constants.js';
@@ -14,9 +15,11 @@ import {
   MIN_SEAT_RADIUS,
   MAX_ROWS_PER_TIER,
   MAX_SEATS_PER_ROW,
+  MAX_GA_CAPACITY,
   tierPrefix,
   normalizeRowName,
   normalizeOrientation,
+  isSeatedTier,
   isRectInsideCanvas,
   generateSeatLayout,
 } from './seatLayout.js';
@@ -76,24 +79,34 @@ export function buildSeatMap(body = {}) {
     if (keys.has(key)) fail(`Duplicate tier key "${key}"`);
     keys.add(key);
 
+    const seated = isSeatedTier(t);
     const prefix = tierPrefix(name);
-    if (prefixes.has(prefix)) {
-      fail(
-        `"${name}" and "${prefixes.get(prefix)}" would both label seats ${prefix}-1, ${prefix}-2... Rename one of them.`
-      );
+    if (seated) {
+      if (prefixes.has(prefix)) {
+        fail(
+          `"${name}" and "${prefixes.get(prefix)}" would both label seats ${prefix}-1, ${prefix}-2... Rename one of them.`
+        );
+      }
+      prefixes.set(prefix, name);
     }
-    prefixes.set(prefix, name);
 
-    const rows = parseRows(t?.rows, name);
+    const rows = seated ? parseRows(t?.rows, name) : [];
     const seatCount = rows.length ? rows.reduce((sum, r) => sum + r.seats, 0) : Number(t?.seatCount);
     if (rows.length && t?.seatCount != null && Number(t.seatCount) !== seatCount) {
       fail(`"${name}": the rows add up to ${seatCount} seats, but the tier total is ${t.seatCount}. Make them equal.`);
     }
     if (!Number.isInteger(seatCount) || seatCount < 1) {
-      fail(`"${name}": number of seats must be a whole number above 0`);
+      fail(
+        seated
+          ? `"${name}": number of seats must be a whole number above 0`
+          : `"${name}": capacity must be a whole number above 0`
+      );
     }
-    if (seatCount > MAX_SEATS_PER_TIER) {
+    if (seated && seatCount > MAX_SEATS_PER_TIER) {
       fail(`"${name}": max ${MAX_SEATS_PER_TIER} seats per tier`);
+    }
+    if (!seated && seatCount > MAX_GA_CAPACITY) {
+      fail(`"${name}": max ${MAX_GA_CAPACITY} tickets for a not-seated tier`);
     }
 
     const price = Number(t?.price);
@@ -112,11 +125,12 @@ export function buildSeatMap(body = {}) {
       seatCount,
       rows,
       orientation: normalizeOrientation(t?.orientation),
+      seated,
       zone: toRect(t?.zone, `"${name}" zone`),
     };
   });
 
-  const totalSeats = tiers.reduce((sum, t) => sum + t.seatCount, 0);
+  const totalSeats = tiers.filter((t) => t.seated).reduce((sum, t) => sum + t.seatCount, 0);
   if (totalSeats > MAX_SEATS_TOTAL) fail(`Max ${MAX_SEATS_TOTAL} seats per seat map`);
 
   const { seats, rowLabels } = generateSeatLayout(tiers);
@@ -184,6 +198,31 @@ export async function assertSoldSeatsPreserved(eventId, nextSeats) {
   }
 }
 
+/** Seats a guest is paying for right now must not disappear, or their payment could not be confirmed. */
+export async function assertHeldSeatsPreserved(eventId, nextSeats) {
+  const held = await SeatReservation.find({
+    eventId,
+    status: 'held',
+    bookingId: { $ne: null },
+    expiresAt: { $gt: new Date() },
+  })
+    .select('label tierKey')
+    .lean();
+  if (!held.length) return;
+  const nextByLabel = new Map(nextSeats.map((s) => [s.label, s.tierKey]));
+  const broken = held.filter((r) => nextByLabel.get(r.label) !== r.tierKey).map((r) => r.label);
+  if (broken.length) {
+    fail(
+      `Guests are checking out with seats ${broken.slice(0, 8).join(', ')}${
+        broken.length > 8 ? ` and ${broken.length - 8} more` : ''
+      } right now. Try again in a few minutes.`,
+      'SEATS_IN_CHECKOUT',
+      { labels: broken },
+      409
+    );
+  }
+}
+
 /**
  * Create / update the TicketTier behind every seat map tier (price, quantity = seats).
  * Tiers removed from the map are deleted when nothing was sold.
@@ -230,15 +269,20 @@ export async function syncSeatMapTiers(event, mapDoc, previousTiers = []) {
 
   for (const { mapTier, tier } of plan) {
     if (!tier) continue;
+    const seated = isSeatedTier(mapTier);
     const seatedSold = soldByKey.get(mapTier.key) || 0;
-    if (tier.sold > seatedSold) {
+    if (seated && tier.sold > seatedSold) {
       fail(
-        `"${tier.name}" already has ${tier.sold - seatedSold} ticket(s) sold without seats. Use a new tier for the seat map instead.`,
+        `"${tier.name}" already has ${tier.sold - seatedSold} ticket(s) sold without seats. Keep it "Not seated" or use a new tier for seats.`,
         'TIER_HAS_UNSEATED_SALES'
       );
     }
     if (mapTier.seatCount < tier.sold) {
-      fail(`"${mapTier.name}" has ${tier.sold} sold, so it needs at least ${tier.sold} seats`);
+      fail(
+        seated
+          ? `"${mapTier.name}" has ${tier.sold} sold, so it needs at least ${tier.sold} seats`
+          : `"${mapTier.name}" has ${tier.sold} sold, so its capacity must be at least ${tier.sold}`
+      );
     }
   }
 
@@ -255,7 +299,7 @@ export async function syncSeatMapTiers(event, mapDoc, previousTiers = []) {
   const seatTotal = mapDoc.tiers.reduce((sum, t) => sum + t.seatCount, 0);
   if (otherTiersTotal + seatTotal > capacity) {
     fail(
-      `The seat map has ${seatTotal} seats${
+      `The seat map has ${seatTotal} tickets${
         otherTiersTotal ? ` plus ${otherTiersTotal} other tickets` : ''
       }, but the event capacity is ${capacity}. Raise Total Venue Capacity in the Details tab.`,
       'CAPACITY_EXCEEDED'
@@ -271,6 +315,7 @@ export async function syncSeatMapTiers(event, mapDoc, previousTiers = []) {
       quantity: mapTier.seatCount,
       maxPerOrder: Math.min(mapDoc.maxSeatsPerOrder || 10, 50),
       isActive: true,
+      seated: isSeatedTier(mapTier),
     };
     if (tier) {
       Object.assign(tier, fields);
@@ -290,6 +335,39 @@ export async function syncSeatMapTiers(event, mapDoc, previousTiers = []) {
       await TicketTier.deleteOne({ _id: tier._id });
     }
   }
+}
+
+/**
+ * Seated / not seated switch from the Tiers tab. If the tier is on the event's seat map, its zone is
+ * re-generated (seats added or removed) with the same checks as saving the map in the builder.
+ */
+export async function setSeatMapTierSeating(event, tier, seated) {
+  const doc = await SeatMap.findOne({ eventId: event._id, 'tiers.tierId': tier._id });
+  if (!doc) return null;
+  const index = doc.tiers.findIndex((t) => String(t.tierId) === String(tier._id));
+  if (isSeatedTier(doc.tiers[index]) === seated) return doc;
+
+  if (seated && tier.sold > 0) {
+    fail(
+      `"${tier.name}" already has ${tier.sold} ticket(s) sold without seats, so it has to stay "Not seated".`,
+      'TIER_HAS_UNSEATED_SALES',
+      null,
+      409
+    );
+  }
+  const built = buildSeatMap({
+    stage: doc.stage,
+    maxSeatsPerOrder: doc.maxSeatsPerOrder,
+    tiers: doc.tiers.map((t, i) => ({ ...t.toObject(), seated: i === index ? seated : isSeatedTier(t) })),
+  });
+  await assertSoldSeatsPreserved(event._id, built.seats);
+  await assertHeldSeatsPreserved(event._id, built.seats);
+
+  doc.tiers = built.tiers;
+  doc.seats = built.seats;
+  doc.rowLabels = built.rowLabels;
+  await doc.save();
+  return doc;
 }
 
 export function newHoldToken() {
@@ -510,49 +588,58 @@ export async function finalizeBookingSeats(booking, map) {
   }
 }
 
-/** Manual / complimentary tickets: take the lowest-numbered free seats in a tier. */
-export async function autoAssignSeats({ eventId, map, tierKey, tierId, qty, bookingId }) {
+/**
+ * Manual / complimentary tickets: mark the seats the admin picked as sold, all or nothing.
+ * Seats that are sold, assigned or held in someone's checkout fail with SEAT_TAKEN (the unique
+ * (eventId, label) index is the check, so two admins or a guest can't get the same seat).
+ */
+export async function assignChosenSeats({ eventId, map, tierKey, tierId, labels, qty, bookingId }) {
   await seatIndexesReady();
-  const tierSeats = map.seats.filter((s) => s.tierKey === tierKey);
-  const now = new Date();
+  const order = new Map(map.seats.map((s, i) => [s.label, i]));
+  const tierOf = new Map(map.seats.map((s) => [s.label, s.tierKey]));
+  const wanted = uniqueLabels(labels).sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  if (wanted.length !== qty) {
+    fail(`Pick ${qty} seat${qty === 1 ? '' : 's'} on the seat map`, 'SEATS_REQUIRED');
+  }
+  const wrong = wanted.filter((label) => tierOf.get(label) !== tierKey);
+  if (wrong.length) fail(`Seat ${wrong[0]} is not part of this tier`, 'INVALID_SEAT');
+
   await SeatReservation.deleteMany({
     eventId,
     status: 'held',
-    expiresAt: { $lte: now },
-    label: { $in: tierSeats.map((s) => s.label) },
+    expiresAt: { $lte: new Date() },
+    label: { $in: wanted },
   });
-  const reserved = new Set(
-    (
-      await SeatReservation.find({ eventId, label: { $in: tierSeats.map((s) => s.label) } })
-        .select('label')
-        .lean()
-    ).map((r) => r.label)
-  );
 
   const assigned = [];
-  for (const seat of tierSeats) {
-    if (assigned.length >= qty) break;
-    if (reserved.has(seat.label)) continue;
-    try {
-      await SeatReservation.create({
-        eventId,
-        label: seat.label,
-        tierKey,
-        tierId,
-        status: 'sold',
-        bookingId,
-      });
-      assigned.push(seat.label);
-    } catch (err) {
-      if (err?.code !== 11000) throw err;
+  const taken = [];
+  try {
+    for (const label of wanted) {
+      try {
+        await SeatReservation.create({ eventId, label, tierKey, tierId, status: 'sold', bookingId });
+        assigned.push(label);
+      } catch (err) {
+        if (err?.code === 11000) taken.push(label);
+        else throw err;
+      }
     }
+  } catch (err) {
+    await SeatReservation.deleteMany({ eventId, bookingId, label: { $in: assigned } });
+    throw err;
   }
 
-  if (assigned.length < qty) {
+  if (taken.length) {
     await SeatReservation.deleteMany({ eventId, bookingId, label: { $in: assigned } });
-    fail(`Only ${assigned.length} free seat(s) left in this tier`, 'SOLD_OUT');
+    throw new AppError(
+      taken.length === 1
+        ? `Seat ${taken[0]} is no longer available (sold, assigned or in someone's checkout). Pick another seat.`
+        : `Seats ${taken.join(', ')} are no longer available (sold, assigned or in someone's checkout). Pick other seats.`,
+      409,
+      'SEAT_TAKEN',
+      { taken }
+    );
   }
-  return assigned;
+  return wanted;
 }
 
 export async function releaseBookingSeats(bookingId) {

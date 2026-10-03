@@ -5,6 +5,8 @@ export const MIN_ZONE_SIZE = 40;
 export const MAX_TIERS = 12;
 export const MAX_SEATS_PER_TIER = 2000;
 export const MAX_SEATS_TOTAL = 5000;
+/** Capacity limit for a not-seated (general admission) tier; it has no seat dots, so it can be larger. */
+export const MAX_GA_CAPACITY = 20000;
 /** Smallest seat radius (canvas units) we allow before a zone counts as too small. */
 export const MIN_SEAT_RADIUS = 2.5;
 export const MAX_ROWS_PER_TIER = 100;
@@ -15,6 +17,11 @@ const ROW_LABEL_CELLS = 1.2;
 
 export function normalizeOrientation(value) {
   return value === 'vertical' ? 'vertical' : 'horizontal';
+}
+
+/** Tiers saved before the seated flag existed have no value and are seated. */
+export function isSeatedTier(tier) {
+  return tier?.seated !== false;
 }
 
 /**
@@ -150,12 +157,13 @@ export function layoutRows(zone, rows) {
 
 /**
  * Build every seat for every tier. Tiers without rows use the auto grid (VIP-1, VIP-2...);
- * tiers with rows are labelled by row (VIP-A-1, VIP-A-2, VIP-B-1...).
+ * tiers with rows are labelled by row (VIP-A-1, VIP-A-2, VIP-B-1...). Not-seated tiers get no seats.
  */
 export function generateSeatLayout(tiers) {
   const seats = [];
   const rowLabels = [];
   for (const tier of tiers) {
+    if (!isSeatedTier(tier)) continue;
     const prefix = tierPrefix(tier.name);
     const vertical = normalizeOrientation(tier.orientation) === 'vertical';
     const zone = vertical ? sidewaysZone(tier.zone) : tier.zone;

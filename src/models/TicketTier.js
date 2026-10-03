@@ -20,6 +20,11 @@ const ticketTierSchema = new mongoose.Schema(
     maxPerOrder: { type: Number, default: 10, min: 1, max: 50 },
     sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+    /**
+     * Seated tiers get numbered seats on the event seat map; not seated = general admission (quantity only).
+     * Only takes effect while the tier is on a published seat map, which keeps this in sync.
+     */
+    seated: { type: Boolean, default: true },
     salesStartAt: { type: Date },
     salesEndAt: { type: Date },
   },
