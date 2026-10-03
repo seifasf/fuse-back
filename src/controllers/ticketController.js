@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Ticket } from '../models/Ticket.js';
 import { Event } from '../models/Event.js';
 import { ScanLog } from '../models/ScanLog.js';
@@ -426,11 +427,22 @@ export const admitTicketMembers = asyncHandler(async (req, res) => {
 
 export const getEventCheckins = asyncHandler(async (req, res) => {
   const eventId = req.params.eventId;
-  const [total, used, recent] = await Promise.all([
-    Ticket.countDocuments({ eventId }),
-    Ticket.countDocuments({ eventId, status: 'used' }),
+  if (!mongoose.isValidObjectId(eventId)) throw new AppError('Event not found', 404, 'NOT_FOUND');
+  const [counts, recent] = await Promise.all([
+    Ticket.aggregate([
+      { $match: { eventId: new mongoose.Types.ObjectId(String(eventId)), status: { $in: ['valid', 'used'] } } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $ifNull: ['$admitCount', 1] } },
+          used: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, { $ifNull: ['$admitCount', 1] }, 0] } },
+        },
+      },
+    ]),
     ScanLog.find({ eventId }).sort({ createdAt: -1 }).limit(20).lean(),
   ]);
+  const total = counts[0]?.total || 0;
+  const used = counts[0]?.used || 0;
 
   res.json({
     eventId,

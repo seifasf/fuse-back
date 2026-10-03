@@ -453,24 +453,27 @@ export const adminCancelBooking = asyncHandler(async (req, res) => {
     { status: 'cancelled' }
   );
 
-  const seatedItems = booking.items.filter((item) => item.seats?.length);
-  if (seatedItems.length) {
+  if (booking.items.some((item) => item.seats?.length)) {
     await releaseBookingSeats(booking._id);
-    if (previous?.status === 'paid') {
-      let freed = 0;
-      for (const item of seatedItems) {
-        freed += item.seats.length;
-        await TicketTier.updateOne(
-          { _id: item.tierId, sold: { $gte: item.seats.length } },
-          { $inc: { sold: -item.seats.length } }
-        );
-      }
+  }
+  if (previous?.status === 'paid') {
+    let freed = 0;
+    for (const item of booking.items) {
+      const qty = Number(item.qty) || 0;
+      if (!qty) continue;
+      freed += qty;
+      await TicketTier.updateOne(
+        { _id: item.tierId, sold: { $gte: qty } },
+        { $inc: { sold: -qty } }
+      );
+    }
+    if (freed) {
       await Event.updateOne(
         { _id: booking.eventId, ticketsSold: { $gte: freed } },
         { $inc: { ticketsSold: -freed } }
       );
-      cacheDel('public:');
     }
+    cacheDel('public:');
   }
   res.json({ booking });
 });
@@ -947,8 +950,6 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
     ]);
     throw err;
   }
-  cacheDel('public:');
-  cacheDel('analytics:');
 
   const tickets = [];
   const qrDataUrls = [];

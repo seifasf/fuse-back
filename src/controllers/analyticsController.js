@@ -5,6 +5,19 @@ import { TicketTier } from '../models/TicketTier.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { cacheGet, cacheSet } from '../utils/memoryCache.js';
 
+// One ticket (QR) can admit a whole party, so guest totals sum admitCount, not documents
+const ADMITS = { $ifNull: ['$admitCount', 1] };
+const USED_ADMITS = { $cond: [{ $eq: ['$status', 'used'] }, ADMITS, 0] };
+const LIVE_TICKET = { status: { $in: ['valid', 'used'] } };
+
+async function sumAdmits(match) {
+  const [row] = await Ticket.aggregate([
+    { $match: { ...LIVE_TICKET, ...match } },
+    { $group: { _id: null, total: { $sum: ADMITS }, used: { $sum: USED_ADMITS } } },
+  ]);
+  return { total: row?.total || 0, used: row?.used || 0 };
+}
+
 export const getOverview = asyncHandler(async (req, res) => {
   const cacheKey = 'analytics:overview';
   const cached = cacheGet(cacheKey);
@@ -20,8 +33,7 @@ export const getOverview = asyncHandler(async (req, res) => {
     pastEvents,
     totalBookings,
     paidBookings,
-    totalTickets,
-    usedTickets,
+    ticketTotals,
     eventsLite,
     revAgg,
     categoryAgg,
@@ -36,8 +48,7 @@ export const getOverview = asyncHandler(async (req, res) => {
     Event.countDocuments({ deletedAt: null, status: 'past' }),
     Booking.countDocuments(),
     Booking.countDocuments({ status: 'paid' }),
-    Ticket.countDocuments(),
-    Ticket.countDocuments({ status: 'used' }),
+    sumAdmits({}),
     Event.find({ deletedAt: null }).select('country category').lean(),
     Booking.aggregate([
       { $match: { status: 'paid' } },
@@ -96,11 +107,12 @@ export const getOverview = asyncHandler(async (req, res) => {
       },
     ]),
     Ticket.aggregate([
+      { $match: LIVE_TICKET },
       {
         $group: {
           _id: '$tierName',
-          count: { $sum: 1 },
-          usedCount: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+          count: { $sum: ADMITS },
+          usedCount: { $sum: USED_ADMITS },
         },
       },
       { $sort: { count: -1 } },
@@ -123,6 +135,7 @@ export const getOverview = asyncHandler(async (req, res) => {
       { $group: { _id: '$category', count: { $sum: 1 } } },
     ]),
   ]);
+  const { total: totalTickets, used: usedTickets } = ticketTotals;
 
   let kwdRevenue = 0;
   let egpRevenue = 0;
@@ -180,12 +193,8 @@ export const getOverview = asyncHandler(async (req, res) => {
   const egEventIds = eventsLite.filter((e) => e.country === 'EG').map((e) => e._id);
 
   const [kwUsedTickets, egUsedTickets] = await Promise.all([
-    kwEventIds.length
-      ? Ticket.countDocuments({ status: 'used', eventId: { $in: kwEventIds } })
-      : 0,
-    egEventIds.length
-      ? Ticket.countDocuments({ status: 'used', eventId: { $in: egEventIds } })
-      : 0,
+    kwEventIds.length ? sumAdmits({ status: 'used', eventId: { $in: kwEventIds } }).then((r) => r.used) : 0,
+    egEventIds.length ? sumAdmits({ status: 'used', eventId: { $in: egEventIds } }).then((r) => r.used) : 0,
   ]);
 
   const payload = {
@@ -250,7 +259,7 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
     .lean();
   if (!event) return res.status(404).json({ code: 'NOT_FOUND', message: 'Event not found' });
 
-  const [paidStats, ticketStats, tiers, salesOverTime] = await Promise.all([
+  const [paidStats, ticketStats, tiers, salesOverTime, tierSales] = await Promise.all([
     Booking.aggregate([
       { $match: { eventId: event._id, status: 'paid' } },
       {
@@ -261,16 +270,7 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
         },
       },
     ]),
-    Ticket.aggregate([
-      { $match: { eventId: event._id } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          used: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
-        },
-      },
-    ]),
+    sumAdmits({ eventId: event._id }),
     TicketTier.find({ eventId })
       .select('name sold quantity price')
       .lean(),
@@ -285,12 +285,25 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
       },
       { $sort: { _id: 1 } },
     ]),
+    Booking.aggregate([
+      { $match: { eventId: event._id, status: 'paid' } },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.tierId',
+          revenue: { $sum: { $multiply: ['$items.qty', '$items.unitPrice'] } },
+          complimentary: {
+            $sum: { $cond: [{ $eq: ['$paymentProvider', 'manual'] }, '$items.qty', 0] },
+          },
+        },
+      },
+    ]),
   ]);
 
   const revenue = paidStats[0]?.revenue || 0;
   const bookingsCount = paidStats[0]?.bookings || 0;
-  const ticketsSold = ticketStats[0]?.total || 0;
-  const usedTickets = ticketStats[0]?.used || 0;
+  const { total: ticketsSold, used: usedTickets } = ticketStats;
+  const salesByTierId = new Map(tierSales.map((s) => [String(s._id), s]));
 
   res.json({
     event,
@@ -302,7 +315,8 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
       name: tier.name,
       sold: tier.sold,
       quantity: tier.quantity,
-      revenue: tier.sold * tier.price,
+      complimentary: salesByTierId.get(String(tier._id))?.complimentary || 0,
+      revenue: salesByTierId.get(String(tier._id))?.revenue || 0,
     })),
     salesOverTime,
     bookings: bookingsCount,
