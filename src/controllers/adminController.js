@@ -855,28 +855,38 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   }
 
   const bookingId = new mongoose.Types.ObjectId();
-  let seats = [];
   const seatMap = await SeatMap.findOne({ eventId: event._id, status: 'published' }).lean();
   const seatedTier = seatMap?.tiers.find((t) => String(t.tierId) === String(tier._id) && isSeatedTier(t));
   const pickedSeats = Array.isArray(req.body.seats) ? req.body.seats : [];
-  if (seatedTier) {
-    seats = await assignChosenSeats({
-      eventId: event._id,
-      map: seatMap,
-      tierKey: seatedTier.key,
-      tierId: tier._id,
-      labels: pickedSeats,
-      qty: quantity,
-      bookingId,
-    });
-    members = members.map((m, i) => ({ ...m, seat: seats[i] }));
-  } else if (pickedSeats.length) {
+  if (!seatedTier && pickedSeats.length) {
     throw new AppError(`${tier.name} tickets don't have seat numbers`, 400, 'INVALID_SEAT');
   }
 
+  // Comp tickets use the same tier/event capacity as paid ones; reserve it atomically
+  const reserved = await TicketTier.findOneAndUpdate(
+    { _id: tier._id, $expr: { $lte: [{ $add: ['$sold', quantity] }, '$quantity'] } },
+    { $inc: { sold: quantity } }
+  );
+  if (!reserved) throw new AppError(`Not enough tickets for ${tier.name}`, 400, 'SOLD_OUT');
+  await Event.updateOne({ _id: event._id }, { $inc: { ticketsSold: quantity } });
+
+  let seats = [];
   let booking;
   let ticket;
   try {
+    if (seatedTier) {
+      seats = await assignChosenSeats({
+        eventId: event._id,
+        map: seatMap,
+        tierKey: seatedTier.key,
+        tierId: tier._id,
+        labels: pickedSeats,
+        qty: quantity,
+        bookingId,
+      });
+      members = members.map((m, i) => ({ ...m, seat: seats[i] }));
+    }
+
     booking = await Booking.create({
       _id: bookingId,
       guest: {
@@ -931,8 +941,14 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   } catch (err) {
     if (seats.length) await releaseBookingSeats(bookingId);
     if (booking) await Booking.deleteOne({ _id: bookingId });
+    await Promise.all([
+      TicketTier.updateOne({ _id: tier._id, sold: { $gte: quantity } }, { $inc: { sold: -quantity } }),
+      Event.updateOne({ _id: event._id, ticketsSold: { $gte: quantity } }, { $inc: { ticketsSold: -quantity } }),
+    ]);
     throw err;
   }
+  cacheDel('public:');
+  cacheDel('analytics:');
 
   const tickets = [];
   const qrDataUrls = [];
@@ -945,9 +961,6 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
   const qrDataUrl = await generateTicketQrDataUrl(ticket._id, booking._id, event._id, qrPayload);
   tickets.push(ticket);
   qrDataUrls.push({ ticketId: ticket._id, code: ticket.code, qrDataUrl });
-
-  await TicketTier.findByIdAndUpdate(tier._id, { $inc: { sold: quantity } });
-  await Event.findByIdAndUpdate(event._id, { $inc: { ticketsSold: quantity } });
 
   if (sendWhatsApp) {
     try {
