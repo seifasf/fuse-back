@@ -16,6 +16,7 @@ import {
   MAX_SEATS_PER_ROW,
   tierPrefix,
   normalizeRowName,
+  normalizeOrientation,
   isRectInsideCanvas,
   generateSeatLayout,
 } from './seatLayout.js';
@@ -110,6 +111,7 @@ export function buildSeatMap(body = {}) {
       price: Math.round(price * 1000) / 1000,
       seatCount,
       rows,
+      orientation: normalizeOrientation(t?.orientation),
       zone: toRect(t?.zone, `"${name}" zone`),
     };
   });

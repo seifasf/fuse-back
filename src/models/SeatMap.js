@@ -45,6 +45,8 @@ const seatMapTierSchema = new mongoose.Schema(
     seatCount: { type: Number, required: true, min: 1 },
     /** Named rows, top to bottom (seats VIP-A-1...). Empty = auto grid (VIP-1...). */
     rows: { type: [seatRowSchema], default: [] },
+    /** horizontal = rows run left to right; vertical = rows become columns (seat 1 at the top). */
+    orientation: { type: String, enum: ['horizontal', 'vertical'], default: 'horizontal' },
     zone: { type: rectSchema, required: true },
   },
   { _id: false }

@@ -116,6 +116,7 @@ function publicSeatMapPayload(map, tiers) {
         price: linked?.price ?? t.price,
         currency: linked?.currency,
         maxPerOrder: linked?.maxPerOrder ?? map.maxSeatsPerOrder,
+        orientation: t.orientation || 'horizontal',
         zone: t.zone,
       };
     }),

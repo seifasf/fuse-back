@@ -13,6 +13,22 @@ const ZONE_PADDING = 8;
 /** Width reserved on each side of a row for its name, in seat cells. */
 const ROW_LABEL_CELLS = 1.2;
 
+export function normalizeOrientation(value) {
+  return value === 'vertical' ? 'vertical' : 'horizontal';
+}
+
+/**
+ * Vertical tiers are laid out in their zone turned on its side and then turned back, so rows
+ * become columns (row A on the left, seat 1 at the top). Labels are unchanged; only positions move.
+ */
+function sidewaysZone(zone) {
+  return { x: zone.x, y: zone.y, w: zone.h, h: zone.w };
+}
+
+function turnBack(zone, p) {
+  return { ...p, x: round1(zone.x + (p.y - zone.y)), y: round1(zone.y + (p.x - zone.x)) };
+}
+
 /** "a-1" -> "A1". Row names become part of seat labels (VIP-A-1), so keep them short and plain. */
 export function normalizeRowName(name) {
   return String(name || '')
@@ -141,16 +157,20 @@ export function generateSeatLayout(tiers) {
   const rowLabels = [];
   for (const tier of tiers) {
     const prefix = tierPrefix(tier.name);
+    const vertical = normalizeOrientation(tier.orientation) === 'vertical';
+    const zone = vertical ? sidewaysZone(tier.zone) : tier.zone;
+    const place = vertical ? (p) => turnBack(tier.zone, p) : (p) => p;
     if (tier.rows?.length) {
-      const laid = layoutRows(tier.zone, tier.rows);
+      const laid = layoutRows(zone, tier.rows);
       for (const s of laid.seats) {
-        seats.push({ label: `${prefix}-${s.row}-${s.number}`, tierKey: tier.key, x: s.x, y: s.y, r: s.r });
+        const { x, y } = place(s);
+        seats.push({ label: `${prefix}-${s.row}-${s.number}`, tierKey: tier.key, x, y, r: s.r });
       }
-      for (const l of laid.labels) rowLabels.push({ tierKey: tier.key, ...l });
+      for (const l of laid.labels) rowLabels.push({ tierKey: tier.key, ...place(l) });
       continue;
     }
-    layoutSeats(tier.zone, tier.seatCount).forEach((pos, i) => {
-      seats.push({ label: `${prefix}-${i + 1}`, tierKey: tier.key, ...pos });
+    layoutSeats(zone, tier.seatCount).forEach((pos, i) => {
+      seats.push({ label: `${prefix}-${i + 1}`, tierKey: tier.key, ...place(pos) });
     });
   }
   return { seats, rowLabels };
