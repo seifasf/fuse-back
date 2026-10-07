@@ -173,8 +173,6 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
     phone: phone.slice(0, 40),
     message: message.slice(0, 5000),
     source: 'website',
-    ip: String(req.ip || req.headers['x-forwarded-for'] || '').slice(0, 80),
-    userAgent: String(req.headers['user-agent'] || '').slice(0, 400),
   });
 
   // Fire-and-forget style: await but never fail the form if mail is down

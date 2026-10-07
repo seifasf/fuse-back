@@ -13,8 +13,6 @@ const contactMessageSchema = new mongoose.Schema(
       index: true,
     },
     source: { type: String, default: 'website', maxlength: 40 },
-    ip: { type: String, default: '', maxlength: 80 },
-    userAgent: { type: String, default: '', maxlength: 400 },
     readAt: { type: Date, default: null },
   },
   { timestamps: true }
