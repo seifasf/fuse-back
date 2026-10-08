@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { connectDB } from './src/config/db.js';
 import { env } from './src/config/env.js';
 import { errorHandler, notFound } from './src/middleware/errorHandler.js';
+import { startApprovalExpirySweep } from './src/services/approvalService.js';
 import authRoutes from './src/routes/authRoutes.js';
 import publicRoutes from './src/routes/publicRoutes.js';
 import bookingRoutes from './src/routes/bookingRoutes.js';
@@ -122,7 +123,8 @@ app.use(notFound);
 app.use(errorHandler);
 
 await connectDB();
+startApprovalExpirySweep();
 
 app.listen(env.port, '0.0.0.0', () => {
-  console.log(`FUSE API running securely on port ${env.port}`);
+  console.log(`FUSE API running securely on port ${env.port} (payments: ${env.paymentMode})`);
 });

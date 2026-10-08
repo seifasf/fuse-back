@@ -114,6 +114,13 @@ export const env = {
   myfatoorah: {
     apiKey: process.env.MYFATOORAH_API_KEY,
   },
+  /**
+   * manual (default): orders wait for an admin to approve them after payment is arranged on WhatsApp.
+   * gateway: the online payment flow (payments/index.js) issues tickets on payment.
+   */
+  paymentMode: cleanEnv(process.env.PAYMENT_MODE) === 'gateway' ? 'gateway' : 'manual',
+  /** How long a manual order keeps its seats and tickets before it expires. */
+  approvalHoldHours: Math.min(168, Math.max(1, Number(cleanEnv(process.env.APPROVAL_HOLD_HOURS)) || 24)),
   /** Public base URL of this API (for uploaded image URLs). */
   apiPublicUrl: cleanUrl(process.env.API_PUBLIC_URL || ''),
   /** Brevo transactional email — live when BREVO_API_KEY is set. */

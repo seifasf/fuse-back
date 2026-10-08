@@ -129,7 +129,12 @@ function publicSeatMapPayload(map, tiers) {
         seated,
         ...(seated
           ? {}
-          : { remaining: Math.max(0, (linked?.quantity ?? t.seatCount) - (linked?.sold || 0)) }),
+          : {
+              remaining: Math.max(
+                0,
+                (linked?.quantity ?? t.seatCount) - (linked?.sold || 0) - (linked?.reserved || 0)
+              ),
+            }),
         zone: t.zone,
       };
     }),
@@ -162,7 +167,7 @@ export const getPublicSeatMap = asyncHandler(async (req, res) => {
 
   const [tiers, availability] = await Promise.all([
     TicketTier.find({ _id: { $in: map.tiers.map((t) => t.tierId).filter(Boolean) } })
-      .select('name color price currency maxPerOrder quantity sold')
+      .select('name color price currency maxPerOrder quantity sold reserved')
       .lean(),
     getSeatAvailability(map.eventId, req.query.holdToken),
   ]);

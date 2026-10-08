@@ -16,6 +16,9 @@ import {
 import {
   adminGetSeatMap, adminSaveSeatMap, adminUnpublishSeatMap,
 } from '../controllers/seatMapController.js';
+import {
+  adminListApprovals, adminGetOrderTickets, adminApproveOrder, adminRejectOrder,
+} from '../controllers/approvalController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { uploadMiddleware, uploadImage, deleteMedia } from '../controllers/uploadController.js';
 import { cacheDel } from '../utils/memoryCache.js';
@@ -70,6 +73,12 @@ router.delete('/characters/:id', adminDeleteCharacter);
 router.get('/bookings', adminListBookings);
 router.post('/bookings/:id/cancel', adminCancelBooking);
 router.get('/bookings/:id/tickets', adminGetBookingTickets);
+
+// Manual payment approvals
+router.get('/approvals', adminListApprovals);
+router.get('/approvals/:id/tickets', adminGetOrderTickets);
+router.post('/approvals/:id/approve', adminApproveOrder);
+router.post('/approvals/:id/reject', adminRejectOrder);
 
 // Clients & manual tickets
 router.get('/clients', adminListClients);

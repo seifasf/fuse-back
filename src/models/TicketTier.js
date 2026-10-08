@@ -17,6 +17,8 @@ const ticketTierSchema = new mongoose.Schema(
     currency: { type: String, enum: CURRENCIES, required: true },
     quantity: { type: Number, required: true, min: 0 },
     sold: { type: Number, default: 0, min: 0 },
+    /** Tickets in orders waiting for admin approval - not sold yet, but not available to others. */
+    reserved: { type: Number, default: 0, min: 0 },
     maxPerOrder: { type: Number, default: 10, min: 1, max: 50 },
     sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
@@ -32,11 +34,11 @@ const ticketTierSchema = new mongoose.Schema(
 );
 
 ticketTierSchema.virtual('remaining').get(function remaining() {
-  return Math.max(0, this.quantity - this.sold);
+  return Math.max(0, this.quantity - this.sold - (this.reserved || 0));
 });
 
 ticketTierSchema.virtual('isSoldOut').get(function isSoldOut() {
-  return this.sold >= this.quantity;
+  return this.sold + (this.reserved || 0) >= this.quantity;
 });
 
 ticketTierSchema.set('toJSON', { virtuals: true });

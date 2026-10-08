@@ -502,9 +502,19 @@ function seatsTakenError(taken) {
   );
 }
 
-/** At checkout: hold exactly the booking's seats under its hold token, or fail with SEAT_TAKEN. */
-export async function claimSeatsForBooking({ eventId, map, labels, holdToken, bookingId }) {
-  const result = await holdSeats({ eventId, map, labels, holdToken, bookingId, holdMs: SEAT_PAYMENT_HOLD_MS });
+/**
+ * At checkout: hold exactly the booking's seats under its hold token, or fail with SEAT_TAKEN.
+ * Orders waiting for admin approval pass a longer holdMs so the seats stay theirs until it expires.
+ */
+export async function claimSeatsForBooking({
+  eventId,
+  map,
+  labels,
+  holdToken,
+  bookingId,
+  holdMs = SEAT_PAYMENT_HOLD_MS,
+}) {
+  const result = await holdSeats({ eventId, map, labels, holdToken, bookingId, holdMs });
   if (result.taken.length) throw seatsTakenError(result.taken);
   return result;
 }
@@ -513,7 +523,7 @@ export async function claimSeatsForBooking({ eventId, map, labels, holdToken, bo
  * On payment confirmation: re-check every seat and mark it sold.
  * Throws SEAT_TAKEN (and keeps the rest held) if any seat was lost.
  */
-export async function finalizeBookingSeats(booking, map) {
+export async function finalizeBookingSeats(booking, map, { holdUntil } = {}) {
   const eventId = booking.eventId?._id || booking.eventId;
   const items = booking.items.filter((i) => i.seats?.length);
   if (!items.length) return;
@@ -582,7 +592,7 @@ export async function finalizeBookingSeats(booking, map) {
   if (taken.length) {
     await SeatReservation.updateMany(
       { eventId, bookingId: booking._id, label: { $in: converted } },
-      { $set: { status: 'held', expiresAt: new Date(now.getTime() + SEAT_PAYMENT_HOLD_MS) } }
+      { $set: { status: 'held', expiresAt: holdUntil || new Date(now.getTime() + SEAT_PAYMENT_HOLD_MS) } }
     );
     throw seatsTakenError(taken);
   }
@@ -640,6 +650,16 @@ export async function assignChosenSeats({ eventId, map, tierKey, tierId, labels,
     );
   }
   return wanted;
+}
+
+/**
+ * Moves an order's held seats off the browser's checkout hold token, so picking seats again in
+ * the same browser (which re-syncs that token) can't release them while the order waits for approval.
+ */
+export async function detachSeatsFromCheckout(bookingId) {
+  const holdToken = `order-${bookingId}`;
+  await SeatReservation.updateMany({ bookingId, status: 'held' }, { $set: { holdToken } });
+  return holdToken;
 }
 
 export async function releaseBookingSeats(bookingId) {

@@ -11,6 +11,7 @@ import { cacheGet, cacheSet } from '../utils/memoryCache.js';
 import { resolveTerms } from '../services/resolveTerms.js';
 import { isSeatedTier } from '../services/seatLayout.js';
 import { sendContactEmails } from '../services/email/index.js';
+import { env } from '../config/env.js';
 
 const notDeleted = { deletedAt: null };
 const publicVisible = { ...notDeleted, visibleOnSite: { $ne: false } };
@@ -73,8 +74,10 @@ export const getEvent = asyncHandler(async (req, res) => {
   const [rawTiers, characters, terms, seatMap] = await Promise.all([
     TicketTier.find({ eventId: event._id, isActive: true })
       .sort({ sortOrder: 1, price: 1 })
-      .select('name color price currency quantity sold maxPerOrder sortOrder eventId isActive')
-      .lean(),
+      .select('name color price currency quantity sold reserved maxPerOrder sortOrder eventId isActive')
+      .lean()
+      // Tickets in orders waiting for approval aren't available to anyone else.
+      .then((list) => list.map(({ reserved, ...t }) => ({ ...t, sold: (t.sold || 0) + (reserved || 0) }))),
     event.characterIds?.length
       ? Character.find({ _id: { $in: event.characterIds }, ...notDeleted })
           .select('name slug image tags bio country featured sortOrder')
@@ -93,7 +96,14 @@ export const getEvent = asyncHandler(async (req, res) => {
     ? rawTiers.map((t) => (seatedIds.has(String(t._id)) ? { ...t, seated: true } : t))
     : rawTiers;
 
-  const payload = { event, tiers, characters, terms, hasSeatMap: Boolean(seatMap) };
+  const payload = {
+    event,
+    tiers,
+    characters,
+    terms,
+    hasSeatMap: Boolean(seatMap),
+    paymentMode: env.paymentMode,
+  };
   cacheSet(cacheKey, payload, 12_000);
   res.set('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
   res.set('X-Cache', 'MISS');

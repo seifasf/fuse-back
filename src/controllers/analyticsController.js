@@ -2,6 +2,7 @@ import { Event } from '../models/Event.js';
 import { Booking } from '../models/Booking.js';
 import { Ticket } from '../models/Ticket.js';
 import { TicketTier } from '../models/TicketTier.js';
+import { SOLD_BOOKING_STATUSES } from '../models/constants.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { cacheGet, cacheSet } from '../utils/memoryCache.js';
 
@@ -47,11 +48,11 @@ export const getOverview = asyncHandler(async (req, res) => {
     Event.countDocuments({ deletedAt: null, status: 'live' }),
     Event.countDocuments({ deletedAt: null, status: 'past' }),
     Booking.countDocuments(),
-    Booking.countDocuments({ status: 'paid' }),
+    Booking.countDocuments({ status: { $in: SOLD_BOOKING_STATUSES } }),
     sumAdmits({}),
     Event.find({ deletedAt: null }).select('country category').lean(),
     Booking.aggregate([
-      { $match: { status: 'paid' } },
+      { $match: { status: { $in: SOLD_BOOKING_STATUSES } } },
       {
         $group: {
           _id: '$currency',
@@ -62,7 +63,7 @@ export const getOverview = asyncHandler(async (req, res) => {
       },
     ]),
     Booking.aggregate([
-      { $match: { status: 'paid' } },
+      { $match: { status: { $in: SOLD_BOOKING_STATUSES } } },
       { $lookup: { from: 'events', localField: 'eventId', foreignField: '_id', as: 'event' } },
       { $unwind: '$event' },
       {
@@ -76,7 +77,7 @@ export const getOverview = asyncHandler(async (req, res) => {
       },
     ]),
     Booking.aggregate([
-      { $match: { status: 'paid' } },
+      { $match: { status: { $in: SOLD_BOOKING_STATUSES } } },
       {
         $group: {
           _id: '$eventId',
@@ -118,7 +119,7 @@ export const getOverview = asyncHandler(async (req, res) => {
       { $sort: { count: -1 } },
     ]),
     Booking.aggregate([
-      { $match: { status: 'paid' } },
+      { $match: { status: { $in: SOLD_BOOKING_STATUSES } } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -261,7 +262,7 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
 
   const [paidStats, ticketStats, tiers, salesOverTime, tierSales] = await Promise.all([
     Booking.aggregate([
-      { $match: { eventId: event._id, status: 'paid' } },
+      { $match: { eventId: event._id, status: { $in: SOLD_BOOKING_STATUSES } } },
       {
         $group: {
           _id: null,
@@ -275,7 +276,7 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
       .select('name sold quantity price')
       .lean(),
     Booking.aggregate([
-      { $match: { eventId: event._id, status: 'paid' } },
+      { $match: { eventId: event._id, status: { $in: SOLD_BOOKING_STATUSES } } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -286,7 +287,7 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
       { $sort: { _id: 1 } },
     ]),
     Booking.aggregate([
-      { $match: { eventId: event._id, status: 'paid' } },
+      { $match: { eventId: event._id, status: { $in: SOLD_BOOKING_STATUSES } } },
       { $unwind: '$items' },
       {
         $group: {
@@ -326,7 +327,7 @@ export const getEventAnalytics = asyncHandler(async (req, res) => {
 export const exportEventCsv = asyncHandler(async (req, res) => {
   const eventId = req.params.id;
   const [bookings, tickets] = await Promise.all([
-    Booking.find({ eventId, status: 'paid' })
+    Booking.find({ eventId, status: { $in: SOLD_BOOKING_STATUSES } })
       .select('guest total currency')
       .lean(),
     Ticket.find({ eventId }).select('bookingId status scannedAt').lean(),

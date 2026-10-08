@@ -34,6 +34,11 @@ services:
         sync: false
       - key: WHATSAPP_PHONE_ID
         sync: false
+      # manual = admin approves orders after payment on WhatsApp; gateway = online payment
+      - key: PAYMENT_MODE
+        value: manual
+      - key: APPROVAL_HOLD_HOURS
+        value: "24"
       - key: PAYMOB_API_KEY
         sync: false
       - key: PAYMOB_INTEGRATION_ID

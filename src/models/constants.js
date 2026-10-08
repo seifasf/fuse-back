@@ -20,11 +20,29 @@ export const EVENT_CATEGORIES = [
   'other',
 ];
 
-export const BOOKING_STATUSES = ['pending', 'paid', 'cancelled', 'refunded', 'expired'];
+/**
+ * pending = waiting for the payment gateway; pending_approval = waiting for an admin to confirm the
+ * payment arranged on WhatsApp (PAYMENT_MODE=manual). paid (gateway) and approved (manual) both mean
+ * tickets were issued.
+ */
+export const BOOKING_STATUSES = [
+  'pending',
+  'pending_approval',
+  'paid',
+  'approved',
+  'rejected',
+  'cancelled',
+  'refunded',
+  'expired',
+];
+
+/** Orders whose tickets are issued and count as sales. */
+export const SOLD_BOOKING_STATUSES = ['paid', 'approved'];
 
 export const TICKET_STATUSES = ['valid', 'used', 'cancelled', 'refunded'];
 
-export const PAYMENT_PROVIDERS = ['mock', 'paymob', 'myfatoorah', 'manual'];
+/** manual = admin-issued complimentary ticket; offline = paid outside the site, approved by an admin. */
+export const PAYMENT_PROVIDERS = ['mock', 'paymob', 'myfatoorah', 'manual', 'offline'];
 
 export const SEAT_MAP_STATUSES = ['draft', 'published'];
 

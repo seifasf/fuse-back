@@ -6,6 +6,7 @@ import {
   buildTicketsEmail,
   buildContactNotifyEmail,
   buildContactAckEmail,
+  buildOrderReceivedEmail,
 } from './templates.js';
 
 /**
@@ -23,6 +24,7 @@ export async function sendTicketsEmail({
   tickets,
   termsAndConditions,
   complimentary = false,
+  orderPath = '',
 }) {
   try {
     if (!toEmail) return { sent: false, error: 'missing_to' };
@@ -47,6 +49,7 @@ export async function sendTicketsEmail({
       termsAndConditions: terms,
       siteUrl,
       complimentary,
+      orderPath,
     });
 
     const attachments = [];
@@ -83,6 +86,33 @@ export async function sendTicketsEmail({
     });
   } catch (err) {
     console.error('[email] sendTicketsEmail failed:', err?.message || err);
+    return { sent: false, error: String(err?.message || err) };
+  }
+}
+
+/** Manual payment mode: tells the guest the order is waiting for approval, with a status link. Never throws. */
+export async function sendOrderReceivedEmail({ toEmail, toName, eventTitle, startsAt, venue, summary, total, orderPath }) {
+  try {
+    if (!toEmail) return { sent: false, error: 'missing_to' };
+    const built = buildOrderReceivedEmail({
+      guestName: toName,
+      eventTitle,
+      startsAt,
+      venue,
+      summary,
+      total,
+      siteUrl: env.clientUrl || 'https://fuseevents.net',
+      orderPath,
+    });
+    return sendBrevoEmail({
+      to: { email: toEmail, name: toName },
+      subject: built.subject,
+      htmlContent: built.html,
+      textContent: built.text,
+      tags: ['fuse-order-received'],
+    });
+  } catch (err) {
+    console.error('[email] sendOrderReceivedEmail failed:', err?.message || err);
     return { sent: false, error: String(err?.message || err) };
   }
 }

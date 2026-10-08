@@ -9,7 +9,8 @@ import { SiteContent } from '../models/SiteContent.js';
 import { ContactMessage } from '../models/ContactMessage.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
-import { EVENT_CATEGORIES } from '../models/constants.js';
+import { EVENT_CATEGORIES, SOLD_BOOKING_STATUSES } from '../models/constants.js';
+import { closePendingOrder } from '../services/approvalService.js';
 import { slugify } from '../utils/slugify.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -268,8 +269,9 @@ export const adminCreateTier = asyncHandler(async (req, res) => {
   const quantity = Math.max(1, Number(req.body.quantity) || 1);
   await assertTierFitsCapacity(req.params.eventId, quantity);
   const color = normalizeHexColor(req.body.color || colorForTierName(name));
+  const { reserved: _reserved, ...body } = req.body;
   const tier = await TicketTier.create({
-    ...req.body,
+    ...body,
     name,
     color,
     quantity,
@@ -295,7 +297,7 @@ async function assertTierNotSeatManaged(eventId, tierId) {
 }
 
 export const adminUpdateTier = asyncHandler(async (req, res) => {
-  const data = { ...req.body };
+  const { reserved: _reserved, ...data } = req.body;
   if (SEAT_MAP_MANAGED_FIELDS.some((f) => data[f] !== undefined)) {
     await assertTierNotSeatManaged(req.params.eventId, req.params.tierId);
   }
@@ -441,13 +443,17 @@ export const adminListBookings = asyncHandler(async (req, res) => {
 });
 
 export const adminCancelBooking = asyncHandler(async (req, res) => {
-  const previous = await Booking.findById(req.params.id).select('status').lean();
-  const booking = await Booking.findByIdAndUpdate(
-    req.params.id,
-    { status: 'cancelled', cancelledAt: new Date() },
-    { new: true }
-  );
+  const pending = await closePendingOrder(req.params.id, 'cancelled', { cancelledAt: new Date() });
+  if (pending) return res.json({ booking: pending });
+
+  // Atomic read of the previous status, so two cancels can't both free the same tickets.
+  const previous = await Booking.findOneAndUpdate(
+    { _id: req.params.id, status: { $nin: ['cancelled', 'pending_approval'] } },
+    { status: 'cancelled', cancelledAt: new Date() }
+  ).lean();
+  const booking = await Booking.findById(req.params.id);
   if (!booking) throw new AppError('Booking not found', 404, 'NOT_FOUND');
+  if (!previous) return res.json({ booking });
   await Ticket.updateMany(
     { bookingId: booking._id, status: { $ne: 'used' } },
     { status: 'cancelled' }
@@ -456,7 +462,7 @@ export const adminCancelBooking = asyncHandler(async (req, res) => {
   if (booking.items.some((item) => item.seats?.length)) {
     await releaseBookingSeats(booking._id);
   }
-  if (previous?.status === 'paid') {
+  if (SOLD_BOOKING_STATUSES.includes(previous.status)) {
     let freed = 0;
     for (const item of booking.items) {
       const qty = Number(item.qty) || 0;
@@ -678,7 +684,7 @@ export const adminListClients = asyncHandler(async (req, res) => {
   } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const matchPaid = { status: 'paid' };
+  const matchPaid = { status: { $in: SOLD_BOOKING_STATUSES } };
   if (eventId && mongoose.Types.ObjectId.isValid(String(eventId))) {
     matchPaid.eventId = new mongoose.Types.ObjectId(String(eventId));
   }
@@ -822,7 +828,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
 
   const tier = await TicketTier.findOne({ _id: tierId, eventId, isActive: true });
   if (!tier) throw new AppError('Invalid ticket tier', 400, 'INVALID_TIER');
-  if (tier.sold + quantity > tier.quantity) {
+  if (tier.sold + (tier.reserved || 0) + quantity > tier.quantity) {
     throw new AppError(`Not enough tickets for ${tier.name}`, 400, 'SOLD_OUT');
   }
 
@@ -867,7 +873,7 @@ export const adminIssueManualTicket = asyncHandler(async (req, res) => {
 
   // Comp tickets use the same tier/event capacity as paid ones; reserve it atomically
   const reserved = await TicketTier.findOneAndUpdate(
-    { _id: tier._id, $expr: { $lte: [{ $add: ['$sold', quantity] }, '$quantity'] } },
+    { _id: tier._id, $expr: { $lte: [{ $add: ['$sold', { $ifNull: ['$reserved', 0] }, quantity] }, '$quantity'] } },
     { $inc: { sold: quantity } }
   );
   if (!reserved) throw new AppError(`Not enough tickets for ${tier.name}`, 400, 'SOLD_OUT');

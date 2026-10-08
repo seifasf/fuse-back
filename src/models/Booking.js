@@ -84,6 +84,14 @@ const bookingSchema = new mongoose.Schema(
     expiresAt: { type: Date },
     /** Browser hold token used to reserve seats during checkout (seated events only). */
     seatHoldToken: { type: String, default: '' },
+    /** Secret in the guest's order-status link (manual approval); lets them see the order without an account. */
+    accessKey: { type: String, default: '' },
+    approvedAt: { type: Date },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectedAt: { type: Date },
+    rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionReason: { type: String, default: '', trim: true, maxlength: 300 },
+    expiredAt: { type: Date },
   },
   { timestamps: true }
 );

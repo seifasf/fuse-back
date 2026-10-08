@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { Ticket } from '../models/Ticket.js';
 import { Event } from '../models/Event.js';
 import { ScanLog } from '../models/ScanLog.js';
+import { Booking } from '../models/Booking.js';
+import { SOLD_BOOKING_STATUSES } from '../models/constants.js';
 import { verifyQrPayload } from '../services/qr.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -228,6 +230,14 @@ async function findTicketForScan(req) {
   return ticket;
 }
 
+/** Status of the ticket's order when it isn't paid / approved (tickets only count once the order is). */
+async function unissuedOrderStatus(ticket) {
+  if (!ticket.bookingId) return null;
+  const booking = await Booking.findById(ticket.bookingId).select('status').lean();
+  if (!booking || SOLD_BOOKING_STATUSES.includes(booking.status)) return null;
+  return booking.status;
+}
+
 /**
  * Scan / look up a ticket.
  * Multi-guest QR → returns select_guests so the agent picks who enters.
@@ -235,6 +245,21 @@ async function findTicketForScan(req) {
  */
 export const scanTicket = asyncHandler(async (req, res) => {
   const ticket = await findTicketForScan(req);
+
+  const orderStatus = await unissuedOrderStatus(ticket);
+  if (orderStatus) {
+    await ScanLog.create({
+      ticketId: ticket._id,
+      eventId: ticket.eventId,
+      agentId: req.user._id,
+      result: 'invalid',
+      holderName: ticket.holderName,
+      tierName: ticket.tierName,
+      code: ticket.code,
+      message: `Order not approved (${orderStatus})`,
+    }).catch(() => {});
+    return res.json({ status: 'invalid', message: `Order not approved (${orderStatus.replace('_', ' ')})` });
+  }
 
   if (ticket.status === 'cancelled' || ticket.status === 'refunded') {
     ticket.scanAttempts += 1;
@@ -349,6 +374,10 @@ export const admitTicketMembers = asyncHandler(async (req, res) => {
 
   if (ticket.status === 'cancelled' || ticket.status === 'refunded') {
     throw new AppError(`Ticket ${ticket.status}`, 400, 'INVALID_TICKET');
+  }
+  const orderStatus = await unissuedOrderStatus(ticket);
+  if (orderStatus) {
+    throw new AppError(`Order not approved (${orderStatus.replace('_', ' ')})`, 400, 'ORDER_NOT_APPROVED');
   }
 
   ensureMembersOnTicket(ticket);

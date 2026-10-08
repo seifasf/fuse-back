@@ -121,6 +121,7 @@ export function buildTicketsEmail({
   termsAndConditions,
   siteUrl,
   complimentary = false,
+  orderPath = '',
 }) {
   const when = formatWhen(startsAt);
   const place = [venue].filter(Boolean).join(' | ');
@@ -131,6 +132,7 @@ export function buildTicketsEmail({
     ? 'Your complimentary pass is ready.'
     : 'Your booking is confirmed.';
   const origin = siteOrigin(siteUrl);
+  const orderUrl = orderPath ? `${origin}${orderPath}` : '';
   const count = Math.max(1, Number(ticketCount) || 1);
   const termsHtml = compactTerms(termsAndConditions);
 
@@ -174,6 +176,11 @@ export function buildTicketsEmail({
           <p style="margin:0;font-size:13px;color:${BRAND.white};">
             <strong>${count} PDF ticket${count > 1 ? 's' : ''}</strong> attached - open to show your QR at the door.
           </p>
+          ${
+            orderUrl
+              ? `<p style="margin:8px 0 0;font-size:12px;"><a href="${escapeHtml(orderUrl)}" style="color:${BRAND.cyan};text-decoration:none;">View your tickets online</a></p>`
+              : ''
+          }
         </td>
       </tr>
     </table>
@@ -211,6 +218,7 @@ export function buildTicketsEmail({
     place ? `Where: ${place}` : '',
     '',
     `${count} PDF ticket(s) attached.`,
+    orderUrl ? `View your tickets online: ${orderUrl}` : '',
     '',
     termsAndConditions ? `Terms: see ${origin}/about#terms` : '',
     origin,
@@ -219,6 +227,68 @@ export function buildTicketsEmail({
     .join('\n');
 
   return { subject: `${title}: ${eventTitle}`, html, text };
+}
+
+/** Manual payment mode: order received, the team will message the guest on WhatsApp. */
+export function buildOrderReceivedEmail({ guestName, eventTitle, startsAt, venue, summary, total, siteUrl, orderPath }) {
+  const origin = siteOrigin(siteUrl);
+  const orderUrl = `${origin}${orderPath}`;
+  const when = formatWhen(startsAt);
+  const greeting = guestName ? `Hi ${escapeHtml(guestName)},` : 'Hi,';
+  const lines = (summary || []).map((l) => escapeHtml(l)).join('<br/>');
+
+  const bodyHtml = `
+    <p style="margin:0 0 4px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:${BRAND.cyan};">
+      Order received
+    </p>
+    <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:${BRAND.white};">${greeting}</p>
+    <p style="margin:0 0 14px;font-size:13px;color:${BRAND.muted};">
+      Your order is waiting for approval. We'll message you on WhatsApp with the payment details,
+      and your tickets will be emailed to you as soon as the payment is confirmed.
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;background:${BRAND.soft};border:1px solid ${BRAND.border};border-radius:10px;">
+      <tr>
+        <td style="padding:12px 14px;">
+          <p style="margin:0 0 2px;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.pink};">Event</p>
+          <p style="margin:0 0 6px;font-size:16px;font-weight:700;line-height:1.25;color:${BRAND.white};">
+            ${escapeHtml(eventTitle || 'FUSE Event')}
+          </p>
+          ${when || venue ? `<p style="margin:0 0 8px;font-size:12px;color:${BRAND.muted};">${escapeHtml([when, venue].filter(Boolean).join(' | '))}</p>` : ''}
+          ${lines ? `<p style="margin:0 0 6px;font-size:12px;line-height:1.5;color:${BRAND.white};">${lines}</p>` : ''}
+          <p style="margin:0;font-size:13px;font-weight:700;color:${BRAND.white};">Total: ${escapeHtml(total)}</p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:0 0 14px;font-size:13px;">
+      <a href="${escapeHtml(orderUrl)}" style="display:inline-block;padding:10px 16px;border-radius:8px;background:${BRAND.cyan};color:${BRAND.bg};font-weight:700;text-decoration:none;">
+        Check your order status
+      </a>
+    </p>
+    <p style="margin:0;font-size:12px;color:${BRAND.muted};">
+      See you there - <span style="color:${BRAND.white};font-weight:700;">FUSE</span>
+    </p>
+  `;
+
+  const title = 'Your FUSE order is waiting for approval';
+  const html = shell({ preheader: `${eventTitle} - we'll message you on WhatsApp`, title, bodyHtml, siteUrl: origin });
+  const text = [
+    greeting,
+    "Your order is waiting for approval. We'll message you on WhatsApp with the payment details.",
+    '',
+    `Event: ${eventTitle || 'FUSE Event'}`,
+    when ? `When: ${when}` : '',
+    venue ? `Where: ${venue}` : '',
+    ...(summary || []),
+    `Total: ${total}`,
+    '',
+    `Order status: ${orderUrl}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return { subject: `Order received: ${eventTitle}`, html, text };
 }
 
 export function buildContactNotifyEmail({ name, email, phone, message, siteUrl }) {

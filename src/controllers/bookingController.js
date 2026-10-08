@@ -3,25 +3,35 @@ import { Event } from '../models/Event.js';
 import { TicketTier } from '../models/TicketTier.js';
 import { Ticket } from '../models/Ticket.js';
 import { getPaymentProvider } from '../services/payments/index.js';
-import { generateTicketQrDataUrl, getQrPayload } from '../services/ticketQr.js';
-import { generateTicketCode } from '../utils/ticketCode.js';
-import { currencyForCountry } from '../models/constants.js';
+import { currencyForCountry, SOLD_BOOKING_STATUSES } from '../models/constants.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { env } from '../config/env.js';
-import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import { cacheDel } from '../utils/memoryCache.js';
 import { stepTimer } from '../utils/stepTimer.js';
-import { sendTicketsEmail, isEmailConfigured } from '../services/email/index.js';
+import { isEmailConfigured, sendOrderReceivedEmail } from '../services/email/index.js';
 import mongoose from 'mongoose';
 import { SeatMap } from '../models/SeatMap.js';
 import {
   claimSeatsForBooking,
+  detachSeatsFromCheckout,
   finalizeBookingSeats,
   releaseBookingSeats,
 } from '../services/seatMapService.js';
 import { isSeatedTier } from '../services/seatLayout.js';
+import {
+  createTicketsForBooking,
+  formatTicketsForClient,
+  isBookingEmailInFlight,
+  orderStatusPath,
+  sendBookingEmailInBackground,
+} from '../services/bookingTickets.js';
+import {
+  generateAccessKey,
+  releaseTierCapacity,
+  reserveTierCapacity,
+} from '../services/approvalService.js';
 
 export const createBooking = asyncHandler(async (req, res) => {
   const { eventId, items, guest, provider, acceptedTerms, holdToken } = req.body;
@@ -61,7 +71,7 @@ export const createBooking = asyncHandler(async (req, res) => {
     if (!tier) throw new AppError('Invalid ticket tier', 400, 'INVALID_TIER');
     const qty = Math.max(0, Number(item.qty) || 0);
     if (qty < 1) throw new AppError('Invalid ticket quantity', 400, 'VALIDATION_ERROR');
-    if (tier.sold + qty > tier.quantity) {
+    if (tier.sold + (tier.reserved || 0) + qty > tier.quantity) {
       throw new AppError(`Not enough tickets for ${tier.name}`, 400, 'SOLD_OUT');
     }
     if (qty > tier.maxPerOrder) {
@@ -127,25 +137,32 @@ export const createBooking = asyncHandler(async (req, res) => {
     (typeof guest.name === 'string' && guest.name.trim()) || primary?.name || 'Guest';
   const guestPhone =
     (typeof guest.phone === 'string' && guest.phone.trim()) || primary?.phone || '';
-
-  const bookingId = new mongoose.Types.ObjectId();
-  let seatHoldToken = '';
-  if (allSeatLabels.length) {
-    if (allSeatLabels.length > seatMap.maxSeatsPerOrder) {
-      throw new AppError(`You can pick up to ${seatMap.maxSeatsPerOrder} seats per order`, 400, 'LIMIT');
-    }
-    const claim = await claimSeatsForBooking({
-      eventId: event._id,
-      map: seatMap,
-      labels: allSeatLabels,
-      holdToken,
-      bookingId,
-    });
-    seatHoldToken = claim.holdToken;
+  if (allSeatLabels.length > (seatMap?.maxSeatsPerOrder ?? Infinity)) {
+    throw new AppError(`You can pick up to ${seatMap.maxSeatsPerOrder} seats per order`, 400, 'LIMIT');
   }
 
+  const manual = env.paymentMode === 'manual';
+  const bookingId = new mongoose.Types.ObjectId();
+  const expiresAt = new Date(Date.now() + (manual ? env.approvalHoldHours * 3600_000 : 30 * 60 * 1000));
+
+  // Manual orders hold their tickets until an admin approves or rejects them (or they expire).
+  if (manual) await reserveTierCapacity(validatedItems);
+
+  let seatHoldToken = '';
   let booking;
   try {
+    if (allSeatLabels.length) {
+      const claim = await claimSeatsForBooking({
+        eventId: event._id,
+        map: seatMap,
+        labels: allSeatLabels,
+        holdToken,
+        bookingId,
+        ...(manual ? { holdMs: expiresAt.getTime() - Date.now() } : {}),
+      });
+      seatHoldToken = manual ? await detachSeatsFromCheckout(bookingId) : claim.holdToken;
+    }
+
     booking = await Booking.create({
       _id: bookingId,
       seatHoldToken,
@@ -166,13 +183,35 @@ export const createBooking = asyncHandler(async (req, res) => {
       ticketCount,
       total,
       currency,
-      status: 'pending',
-      paymentProvider: provider || 'mock',
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      status: manual ? 'pending_approval' : 'pending',
+      paymentProvider: manual ? 'offline' : provider || 'mock',
+      accessKey: generateAccessKey(),
+      expiresAt,
     });
   } catch (err) {
     if (allSeatLabels.length) await releaseBookingSeats(bookingId);
+    if (manual) await releaseTierCapacity(validatedItems);
     throw err;
+  }
+
+  if (manual) {
+    cacheDel('public:');
+    const statusUrl = orderStatusPath(booking);
+    if (isEmailConfigured()) {
+      sendOrderReceivedEmail({
+        toEmail: booking.guest.email,
+        toName: booking.guest.name,
+        eventTitle: event.title,
+        startsAt: event.startsAt,
+        venue: event.venue,
+        summary: validatedItems.map(
+          (i) => `${i.qty} x ${i.tierName}${i.seats.length ? ` (${i.seats.join(', ')})` : ''}`
+        ),
+        total: `${total} ${currency}`,
+        orderPath: statusUrl,
+      }).catch(() => {});
+    }
+    return res.status(201).json({ booking, statusUrl, paymentMode: 'manual' });
   }
 
   const paymentProvider = getPaymentProvider(event.country, provider);
@@ -189,48 +228,8 @@ export const createBooking = asyncHandler(async (req, res) => {
       ? `${returnPath}?bookingId=${booking._id}&status=success`
       : payment.paymentUrl || `${returnPath}?status=success`;
 
-  res.status(201).json({ booking, paymentUrl });
+  res.status(201).json({ booking, paymentUrl, paymentMode: 'gateway' });
 });
-
-/**
- * Emails go out after the response so a slow PDF build or Brevo call never blocks checkout.
- * In-process only: if the server restarts mid-send, emailSentAt stays empty and the next
- * confirm call for that booking (e.g. reopening the confirmation page) sends it again.
- */
-const emailsInFlight = new Set();
-
-function sendBookingEmailInBackground(booking, tickets) {
-  const key = String(booking._id);
-  if (booking.emailSentAt || emailsInFlight.has(key) || !tickets.length) return false;
-  if (!isEmailConfigured()) {
-    console.log('[email] Booking confirmed - Brevo not configured yet (mock).');
-    return false;
-  }
-
-  emailsInFlight.add(key);
-  const eventDoc = booking.eventId && typeof booking.eventId === 'object' ? booking.eventId : null;
-  const started = Date.now();
-  sendTicketsEmail({
-    toEmail: booking.guest.email,
-    toName: booking.guest.name,
-    eventTitle: tickets[0]?.eventTitle || eventDoc?.title || booking.eventSnapshot?.title,
-    eventDescription: eventDoc?.description,
-    venue: eventDoc?.venue || booking.eventSnapshot?.venue,
-    startsAt: eventDoc?.startsAt || booking.eventSnapshot?.startsAt,
-    termsAndConditions: eventDoc?.termsAndConditions,
-    tickets,
-    complimentary: booking.paymentProvider === 'manual',
-  })
-    .then(async (mail) => {
-      console.log(
-        `[timing] email ${key} ${mail.sent ? 'sent' : `not sent (${mail.error || 'unknown'})`} in ${Date.now() - started}ms`
-      );
-      if (mail.sent) await Booking.updateOne({ _id: booking._id }, { $set: { emailSentAt: new Date() } });
-    })
-    .catch((err) => console.error('[email] background send failed:', err?.message || err))
-    .finally(() => emailsInFlight.delete(key));
-  return true;
-}
 
 export const confirmPayment = asyncHandler(async (req, res) => {
   const { bookingId } = req.params;
@@ -239,41 +238,14 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   timer.mark('load');
   if (!booking) throw new AppError('Booking not found', 404, 'NOT_FOUND');
 
-  const formatTickets = async (ticketDocs) => {
-    const out = [];
-    for (const t of ticketDocs) {
-      const qrDataUrl = t.qrPayload
-        ? await QRCode.toDataURL(t.qrPayload, { margin: 1, width: 300 })
-        : await generateTicketQrDataUrl(t._id, booking._id, t.eventId);
-      const members =
-        Array.isArray(t.members) && t.members.length
-          ? t.members.map((m) => ({ name: m.name, phone: m.phone, seat: m.seat || '' }))
-          : [{ name: t.holderName, phone: t.holderPhone || '', seat: '' }];
-      out.push({
-        id: t._id,
-        code: t.code,
-        status: t.status,
-        tierName: t.tierName,
-        tierColor: t.tierColor,
-        eventTitle: t.eventTitle,
-        holderName: t.holderName,
-        admitCount: t.admitCount || members.length || 1,
-        members,
-        seats: Array.isArray(t.seats) ? t.seats : [],
-        qrDataUrl,
-      });
-    }
-    return out;
-  };
-
   const sendAlreadyPaid = async (booking, { retryEmail = true } = {}) => {
     const existing = await Ticket.find({ bookingId });
-    const formatted = await formatTickets(existing);
+    const formatted = await formatTicketsForClient(existing);
 
     // Retry email if it never went out (e.g. Brevo was added later, or the server restarted mid-send)
     const emailQueued = retryEmail ? sendBookingEmailInBackground(booking, existing) : false;
     const emailSent =
-      Boolean(booking.emailSentAt) || emailQueued || emailsInFlight.has(String(booking._id));
+      Boolean(booking.emailSentAt) || emailQueued || isBookingEmailInFlight(booking._id);
     timer.done('already-paid');
 
     return res.json({
@@ -286,6 +258,11 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   };
 
   if (booking.status === 'paid') return sendAlreadyPaid(booking);
+
+  // In manual mode tickets are only issued by an admin approving the order.
+  if (env.paymentMode !== 'gateway') {
+    throw new AppError('Online payment is not enabled', 400, 'PAYMENT_DISABLED');
+  }
 
   if (booking.status !== 'pending') {
     throw new AppError('Booking cannot be paid', 400, 'INVALID_STATUS');
@@ -318,49 +295,8 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   booking.status = 'paid';
   booking.paidAt = paidAt;
 
-  const eventDoc = booking.eventId;
-  const eventId = eventDoc._id || eventDoc;
-  const eventTitle = eventDoc.title || booking.eventSnapshot?.title || 'FUSE Event';
-
-  const tickets = [];
-
-  for (const item of booking.items) {
-    const seats = Array.isArray(item.seats) ? item.seats : [];
-    const members = (
-      Array.isArray(item.members) && item.members.length === item.qty
-        ? item.members.map((m) => ({
-            name: String(m.name || '').trim(),
-            phone: String(m.phone || '').trim(),
-          }))
-        : Array.from({ length: item.qty }, () => ({
-            name: booking.guest.name,
-            phone: booking.guest.phone || '',
-          }))
-    ).map((m, i) => (seats[i] ? { ...m, seat: seats[i] } : m));
-
-    const holderName = members.map((m) => m.name).filter(Boolean).join(', ') || booking.guest.name;
-    const holderPhone = members[0]?.phone || booking.guest.phone || '';
-
-    const ticketId = new mongoose.Types.ObjectId();
-    const ticket = await Ticket.create({
-      _id: ticketId,
-      bookingId: booking._id,
-      eventId,
-      tierId: item.tierId,
-      code: generateTicketCode(),
-      qrPayload: getQrPayload(ticketId, booking._id, eventId),
-      holderName: holderName.slice(0, 120),
-      holderEmail: booking.guest.email,
-      holderPhone: holderPhone.slice(0, 32),
-      members,
-      seats,
-      admitCount: item.qty,
-      tierName: item.tierName,
-      tierColor: normalizeHexColor(item.tierColor || colorForTierName(item.tierName)),
-      eventTitle,
-    });
-    tickets.push(ticket);
-  }
+  const eventId = booking.eventId?._id || booking.eventId;
+  const tickets = await createTicketsForBooking(booking);
   timer.mark('tickets');
 
   await Promise.all([
@@ -374,7 +310,7 @@ export const confirmPayment = asyncHandler(async (req, res) => {
   timer.mark('counters');
 
   const emailQueued = sendBookingEmailInBackground(booking, tickets);
-  const formatted = await formatTickets(tickets);
+  const formatted = await formatTicketsForClient(tickets);
   timer.mark('qr');
   timer.done(`tickets=${tickets.length} email=${emailQueued ? 'queued' : 'skipped'}`);
 
@@ -399,6 +335,9 @@ export const paymentWebhook = asyncHandler(async (req, res) => {
   res.json({ received: true });
 });
 
+/** Orders the guest can see on My tickets: issued ones plus manual orders waiting for, or closed without, approval. */
+const MY_ORDER_STATUSES = [...SOLD_BOOKING_STATUSES, 'pending_approval', 'rejected', 'expired'];
+
 export const getMyTickets = asyncHandler(async (req, res) => {
   const filter = req.user
     ? { $or: [{ clientId: req.user._id }, { 'guest.email': req.user.email }] }
@@ -408,14 +347,19 @@ export const getMyTickets = asyncHandler(async (req, res) => {
     throw new AppError('Email required', 400, 'VALIDATION_ERROR');
   }
 
-  const bookings = await Booking.find({ ...filter, status: 'paid' })
+  const bookings = await Booking.find({ ...filter, status: { $in: MY_ORDER_STATUSES } })
     .populate('eventId')
     .sort({ createdAt: -1 })
     .lean();
 
-  const tickets = await Ticket.find({
-    bookingId: { $in: bookings.map((b) => b._id) },
-  }).lean();
+  const soldIds = bookings.filter((b) => SOLD_BOOKING_STATUSES.includes(b.status)).map((b) => b._id);
+  const tickets = await Ticket.find({ bookingId: { $in: soldIds } }).lean();
 
-  res.json({ bookings, tickets });
+  // The order-status link (with its secret) only goes to a signed-in owner, never to an email-only lookup.
+  const out = bookings.map(({ accessKey, ...b }) => ({
+    ...b,
+    statusUrl: req.user ? orderStatusPath({ _id: b._id, accessKey }) : '',
+  }));
+
+  res.json({ bookings: out, tickets });
 });
