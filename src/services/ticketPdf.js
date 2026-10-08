@@ -184,7 +184,7 @@ export async function buildTicketPdfBuffer(ticket) {
   // Bottom block, pinned from the page bottom up
   setFont(false, 6.5, '#7a7a88');
   const note = wrapText(
-    'Present this QR at the entrance. If the scanner fails, gate staff can verify with the ticket code above.',
+    'Present this QR at the entrance.',
     CW,
     measure,
     2

@@ -35,6 +35,7 @@ function eventOf(booking) {
     startsAt: e?.startsAt || booking.eventSnapshot?.startsAt,
     venue: e?.venue || booking.eventSnapshot?.venue || '',
     city: e?.city || '',
+    country: e?.country || booking.eventSnapshot?.country || '',
     coverImage: e?.coverImage || '',
   };
 }
@@ -56,7 +57,7 @@ function guestOrderView(booking) {
   return {
     _id: booking._id,
     status: booking.status,
-    guest: { name: booking.guest?.name, email: booking.guest?.email },
+    guest: { name: booking.guest?.name, email: booking.guest?.email, phone: booking.guest?.phone },
     event: eventOf(booking),
     items: itemsOf(booking),
     ticketCount: booking.ticketCount,
@@ -67,7 +68,7 @@ function guestOrderView(booking) {
     approvedAt: booking.approvedAt || (booking.status === 'paid' ? booking.paidAt : undefined),
     rejectedAt: booking.rejectedAt,
     rejectionReason: booking.status === 'rejected' ? booking.rejectionReason || '' : '',
-    emailSent: Boolean(booking.emailSentAt),
+    emailSent: Boolean(booking.emailSentAt) || isBookingEmailInFlight(booking._id),
   };
 }
 
