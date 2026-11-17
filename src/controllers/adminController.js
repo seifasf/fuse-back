@@ -115,6 +115,26 @@ function sanitizeEventBody(body = {}) {
   if (typeof data.mapsUrl === 'string') {
     data.mapsUrl = data.mapsUrl.trim().slice(0, 1000);
   }
+  if (typeof data.externalTicketUrl === 'string') {
+    const raw = data.externalTicketUrl.trim().slice(0, 1000);
+    if (!raw) {
+      data.externalTicketUrl = '';
+    } else {
+      try {
+        const u = new URL(raw);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          throw new Error('bad protocol');
+        }
+        data.externalTicketUrl = u.toString();
+      } catch {
+        throw new AppError(
+          'External ticket link must be a valid http(s) URL',
+          400,
+          'VALIDATION_ERROR'
+        );
+      }
+    }
+  }
   if (typeof data.description === 'string') data.description = data.description.trim();
   if (typeof data.category === 'string') data.category = normalizeCategory(data.category) || 'club night';
   if (typeof data.visibleOnSite === 'boolean') data.visibleOnSite = data.visibleOnSite;

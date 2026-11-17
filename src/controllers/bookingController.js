@@ -53,6 +53,13 @@ export const createBooking = asyncHandler(async (req, res) => {
   if (event.visibleOnSite === false) {
     throw new AppError('Event is not available on the website', 400, 'EVENT_HIDDEN');
   }
+  if (event.externalTicketUrl) {
+    throw new AppError(
+      'Tickets for this event are sold on another website',
+      400,
+      'EXTERNAL_TICKETS'
+    );
+  }
 
   const currency = currencyForCountry(event.country);
   let total = 0;

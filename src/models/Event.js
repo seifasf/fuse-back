@@ -25,6 +25,11 @@ const eventSchema = new mongoose.Schema(
     address: { type: String, trim: true, default: '', maxlength: 300 },
     /** Optional Google Maps share / place link shown on the event page. */
     mapsUrl: { type: String, trim: true, default: '', maxlength: 1000 },
+    /**
+     * When set, "Buy tickets" sends guests to this partner site instead of Fuse checkout.
+     * Empty = sell tickets on Fuse as usual.
+     */
+    externalTicketUrl: { type: String, trim: true, default: '', maxlength: 1000 },
     startsAt: { type: Date, required: true },
     endsAt: { type: Date },
     timezone: { type: String, default: 'Africa/Cairo' },
