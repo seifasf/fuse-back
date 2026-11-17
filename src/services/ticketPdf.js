@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import PDFDocument from 'pdfkit';
-import QRCode from 'qrcode';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
+import { generateTicketQrPng } from './ticketQr.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = path.resolve(__dirname, '../../assets');
@@ -117,17 +117,12 @@ export async function buildTicketPdfBuffer(ticket) {
     .map((m) => ({ name: toPdfText(m.name), seat: toPdfText(m.seat) }))
     .filter((m) => m.name);
 
+  // Prefer regenerating from the signed payload so emailed PDFs stay sharp.
   let qrPng;
-  if (ticket.qrDataUrl?.startsWith('data:image')) {
+  if (ticket.qrPayload) {
+    qrPng = await generateTicketQrPng(ticket.qrPayload);
+  } else if (ticket.qrDataUrl?.startsWith('data:image')) {
     qrPng = Buffer.from(ticket.qrDataUrl.split(',')[1], 'base64');
-  } else if (ticket.qrPayload) {
-    qrPng = await QRCode.toBuffer(ticket.qrPayload, {
-      type: 'png',
-      margin: 2,
-      width: 480,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#000000', light: '#ffffff' },
-    });
   } else {
     throw new Error('Ticket missing QR payload');
   }
@@ -230,10 +225,10 @@ export async function buildTicketPdfBuffer(ticket) {
     y += 0.8;
   }
 
-  // Guests: as many lines as fit while keeping the QR at least 40 mm
-  const QR_PAD = 2.5;
-  const QR_MIN = 40;
-  const QR_MAX = 56;
+  // Guests: as many lines as fit while keeping the QR large enough to scan when printed
+  const QR_PAD = 2;
+  const QR_MIN = 55;
+  const QR_MAX = 72;
   const guestLineH = 3.5;
   const guestBudget = Math.floor((qrLimit - QR_PAD * 2 - 3 - QR_MIN - y - 1) / guestLineH);
   const guestItems =
@@ -241,16 +236,17 @@ export async function buildTicketPdfBuffer(ticket) {
       ? members.map((m) => (m.seat ? `${m.name} (${m.seat})` : m.name))
       : [members[0]?.name || holderName].filter(Boolean);
   setFont(false, 7.5, '#6e6e7d');
-  const guestLines = packItems(guestItems, `   ${DOT}   `, CW, measure, Math.max(0, Math.min(4, guestBudget)));
+  const guestLines = packItems(guestItems, `   ${DOT}   `, CW, measure, Math.max(0, Math.min(3, guestBudget)));
   for (const line of guestLines) {
     center(line, y);
     y += guestLineH;
   }
   if (guestLines.length) y += 1;
 
-  // QR fills the space between the top and bottom blocks
-  const qrTop = y + 3 + QR_PAD;
-  const qrSize = Math.max(QR_MIN, Math.min(QR_MAX, qrLimit - QR_PAD - qrTop));
+  // QR fills the space between the top and bottom blocks (prefer large for phone scanners)
+  const qrTop = y + 2 + QR_PAD;
+  const available = Math.max(0, qrLimit - QR_PAD - qrTop);
+  const qrSize = Math.min(QR_MAX, Math.max(available, Math.min(QR_MIN, available)));
   const qrX = (W - qrSize) / 2;
   doc
     .roundedRect(mm(qrX - QR_PAD), mm(qrTop - QR_PAD), mm(qrSize + QR_PAD * 2), mm(qrSize + QR_PAD * 2), mm(3))

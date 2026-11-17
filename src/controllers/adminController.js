@@ -1213,13 +1213,21 @@ export const adminListContactMessages = asyncHandler(async (req, res) => {
   }
 
   const skip = (page - 1) * limit;
-  const [messages, total, newCount] = await Promise.all([
+  const [messages, total, statusCounts] = await Promise.all([
     ContactMessage.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     ContactMessage.countDocuments(filter),
-    ContactMessage.countDocuments({ status: 'new' }),
+    ContactMessage.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
   ]);
 
-  res.json({ messages, total, page, limit, newCount });
+  const counts = { all: 0, new: 0, read: 0, archived: 0 };
+  for (const row of statusCounts) {
+    if (row?._id && Object.prototype.hasOwnProperty.call(counts, row._id)) {
+      counts[row._id] = row.n;
+      counts.all += row.n;
+    }
+  }
+
+  res.json({ messages, total, page, limit, newCount: counts.new, counts });
 });
 
 export const adminGetContactMessage = asyncHandler(async (req, res) => {

@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import QRCode from 'qrcode';
 import { Booking } from '../models/Booking.js';
 import { Ticket } from '../models/Ticket.js';
 import { generateTicketQrDataUrl, getQrPayload } from './ticketQr.js';
@@ -58,9 +57,7 @@ export async function createTicketsForBooking(booking) {
 export async function formatTicketsForClient(ticketDocs) {
   const out = [];
   for (const t of ticketDocs) {
-    const qrDataUrl = t.qrPayload
-      ? await QRCode.toDataURL(t.qrPayload, { margin: 1, width: 300 })
-      : await generateTicketQrDataUrl(t._id, t.bookingId, t.eventId);
+    const qrDataUrl = await generateTicketQrDataUrl(t._id, t.bookingId, t.eventId, t.qrPayload);
     const members =
       Array.isArray(t.members) && t.members.length
         ? t.members.map((m) => ({ name: m.name, phone: m.phone, seat: m.seat || '' }))
