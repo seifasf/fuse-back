@@ -9,7 +9,12 @@ import { SiteContent } from '../models/SiteContent.js';
 import { ContactMessage } from '../models/ContactMessage.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
-import { EVENT_CATEGORIES, SOLD_BOOKING_STATUSES } from '../models/constants.js';
+import {
+  CONTACT_TOPIC_LABELS,
+  CONTACT_TOPICS,
+  EVENT_CATEGORIES,
+  SOLD_BOOKING_STATUSES,
+} from '../models/constants.js';
 import { closePendingOrder } from '../services/approvalService.js';
 import { slugify } from '../utils/slugify.js';
 import { AppError } from '../utils/AppError.js';
@@ -1221,15 +1226,19 @@ export const adminListContactMessages = asyncHandler(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 30));
   const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const topic = typeof req.query.topic === 'string' ? req.query.topic.trim() : '';
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
   const filter = {};
   if (status && ['new', 'read', 'archived'].includes(status)) {
     filter.status = status;
   }
+  if (topic && CONTACT_TOPICS.includes(topic)) {
+    filter.topic = topic;
+  }
   if (search) {
     const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    filter.$or = [{ name: re }, { email: re }, { phone: re }, { message: re }];
+    filter.$or = [{ name: re }, { email: re }, { phone: re }, { message: re }, { topic: re }];
   }
 
   const skip = (page - 1) * limit;
@@ -1247,7 +1256,16 @@ export const adminListContactMessages = asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ messages, total, page, limit, newCount: counts.new, counts });
+  res.json({
+    messages,
+    total,
+    page,
+    limit,
+    newCount: counts.new,
+    counts,
+    topics: CONTACT_TOPICS,
+    topicLabels: CONTACT_TOPIC_LABELS,
+  });
 });
 
 export const adminGetContactMessage = asyncHandler(async (req, res) => {

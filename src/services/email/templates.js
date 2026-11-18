@@ -291,25 +291,27 @@ export function buildOrderReceivedEmail({ guestName, eventTitle, startsAt, venue
   return { subject: `Order received: ${eventTitle}`, html, text };
 }
 
-export function buildContactNotifyEmail({ name, email, phone, message, siteUrl }) {
+export function buildContactNotifyEmail({ name, email, phone, topic, topicLabel, message, siteUrl }) {
+  const topicLine = topicLabel || topic || '';
   const bodyHtml = `
     <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND.cyan};">New message</p>
     <p style="margin:0 0 12px;font-size:16px;font-weight:700;color:${BRAND.white};">Contact form</p>
     <p style="margin:0 0 4px;font-size:13px;color:${BRAND.muted};">Name: <span style="color:${BRAND.text};">${escapeHtml(name)}</span></p>
     <p style="margin:0 0 4px;font-size:13px;color:${BRAND.muted};">Email: <a href="mailto:${escapeHtml(email)}" style="color:${BRAND.cyan};text-decoration:none;">${escapeHtml(email)}</a></p>
-    ${phone ? `<p style="margin:0 0 10px;font-size:13px;color:${BRAND.muted};">Phone: <span style="color:${BRAND.text};">${escapeHtml(phone)}</span></p>` : ''}
+    ${phone ? `<p style="margin:0 0 4px;font-size:13px;color:${BRAND.muted};">Phone: <span style="color:${BRAND.text};">${escapeHtml(phone)}</span></p>` : ''}
+    ${topicLine ? `<p style="margin:0 0 10px;font-size:13px;color:${BRAND.muted};">Topic: <span style="color:${BRAND.text};">${escapeHtml(topicLine)}</span></p>` : ''}
     <div style="padding:10px 12px;background:${BRAND.bg};border:1px solid ${BRAND.border};border-radius:8px;color:${BRAND.text};font-size:13px;white-space:pre-wrap;">${escapeHtml(message)}</div>
   `;
 
   return {
-    subject: `FUSE contact: ${name}`,
+    subject: `FUSE contact${topicLine ? ` (${topicLine})` : ''}: ${name}`,
     html: shell({
       preheader: `Message from ${name}`,
       title: 'New contact message',
       bodyHtml,
       siteUrl,
     }),
-    text: `New contact from ${name} <${email}>\nPhone: ${phone || '-'}\n\n${message}`,
+    text: `New contact from ${name} <${email}>\nPhone: ${phone || '-'}\nTopic: ${topicLine || '-'}\n\n${message}`,
   };
 }
 

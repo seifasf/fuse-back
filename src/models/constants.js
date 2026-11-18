@@ -60,6 +60,25 @@ export const SECTION_TYPES = [
   'custom',
 ];
 
+/** Contact form inquiry topics (stored as stable keys; UI shows translated labels). */
+export const CONTACT_TOPICS = [
+  'tickets',
+  'event_booking',
+  'partnerships',
+  'guest_support',
+  'press',
+  'other',
+];
+
+export const CONTACT_TOPIC_LABELS = {
+  tickets: 'Tickets & bookings',
+  event_booking: 'Book an event / production',
+  partnerships: 'Partnerships & brands',
+  guest_support: 'Guest support',
+  press: 'Press & media',
+  other: 'Other',
+};
+
 export const SCAN_RESULTS = ['valid', 'already_used', 'invalid', 'cancelled', 'forbidden', 'partial'];
 
 /** Country ? default currency */

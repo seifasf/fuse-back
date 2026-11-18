@@ -12,6 +12,7 @@ import { resolveTerms } from '../services/resolveTerms.js';
 import { isSeatedTier } from '../services/seatLayout.js';
 import { sendContactEmails } from '../services/email/index.js';
 import { env } from '../config/env.js';
+import { CONTACT_TOPICS } from '../models/constants.js';
 
 const notDeleted = { deletedAt: null };
 const publicVisible = { ...notDeleted, visibleOnSite: { $ne: false } };
@@ -165,6 +166,7 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
+  const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
 
   if (!name || name.length < 2) {
@@ -172,6 +174,9 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
   }
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new AppError('Please enter a valid email', 400, 'VALIDATION_ERROR');
+  }
+  if (!CONTACT_TOPICS.includes(topic)) {
+    throw new AppError('Please choose a topic for your inquiry', 400, 'VALIDATION_ERROR');
   }
   if (!message || message.length < 5) {
     throw new AppError('Please enter a message', 400, 'VALIDATION_ERROR');
@@ -181,12 +186,13 @@ export const submitContactMessage = asyncHandler(async (req, res) => {
     name: name.slice(0, 120),
     email: email.slice(0, 200),
     phone: phone.slice(0, 40),
+    topic,
     message: message.slice(0, 5000),
     source: 'website',
   });
 
   // Fire-and-forget style: await but never fail the form if mail is down
-  const mail = await sendContactEmails({ name, email, phone, message });
+  const mail = await sendContactEmails({ name, email, phone, topic, message });
 
   res.status(201).json({
     ok: true,

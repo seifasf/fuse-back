@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { CONTACT_TOPIC_LABELS } from '../../models/constants.js';
 import { buildTicketPdfBuffer } from '../ticketPdf.js';
 import { resolveTerms } from '../resolveTerms.js';
 import { sendBrevoEmail, isEmailConfigured } from './brevo.js';
@@ -118,14 +119,23 @@ export async function sendOrderReceivedEmail({ toEmail, toName, eventTitle, star
 }
 
 /** Notify the team + optional auto-ack to the guest. */
-export async function sendContactEmails({ name, email, phone, message }) {
+export async function sendContactEmails({ name, email, phone, topic, message }) {
   const siteUrl = env.clientUrl || 'https://fuseevents.net';
   const results = { notify: null, ack: null };
+  const topicLabel = CONTACT_TOPIC_LABELS[topic] || topic || '';
 
   try {
     const notifyTo = env.email.notifyTo || env.email.fromEmail;
     if (notifyTo) {
-      const built = buildContactNotifyEmail({ name, email, phone, message, siteUrl });
+      const built = buildContactNotifyEmail({
+        name,
+        email,
+        phone,
+        topic,
+        topicLabel,
+        message,
+        siteUrl,
+      });
       results.notify = await sendBrevoEmail({
         to: notifyTo,
         subject: built.subject,
