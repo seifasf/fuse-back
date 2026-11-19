@@ -6,9 +6,7 @@ services:
   - type: web
     name: fuse-api
     runtime: node
-    # Starter stays awake 24/7 (no 15-min sleep, no 750 free-hour cut-off).
-    # Changing this file alone does not bill you - upgrade fuse-api in the Render dashboard.
-    plan: starter
+    plan: free
     region: frankfurt
     buildCommand: npm ci --omit=dev
     startCommand: npm start
