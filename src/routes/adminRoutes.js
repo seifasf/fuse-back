@@ -4,6 +4,7 @@ import {
   adminListTiers, adminCreateTier, adminUpdateTier, adminDeleteTier,
   adminListCharacters, adminCreateCharacter, adminUpdateCharacter, adminDeleteCharacter,
   adminListBookings, adminCancelBooking, adminGetBookingTickets,
+  adminDeleteBooking, adminPurgeClosedBookings,
   adminListAgents, adminCreateAgent, adminUpdateAgent, adminDeleteAgent,
   adminGetContent, adminUpdateContent,
   adminGetSections, adminUpdateSections, adminAddSection, adminUpdateSection, adminDeleteSection,
@@ -71,8 +72,10 @@ router.delete('/characters/:id', adminDeleteCharacter);
 
 // Bookings
 router.get('/bookings', adminListBookings);
+router.post('/bookings/purge-closed', adminPurgeClosedBookings);
 router.post('/bookings/:id/cancel', adminCancelBooking);
 router.get('/bookings/:id/tickets', adminGetBookingTickets);
+router.delete('/bookings/:id', adminDeleteBooking);
 
 // Manual payment approvals
 router.get('/approvals', adminListApprovals);

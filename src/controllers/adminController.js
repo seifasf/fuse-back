@@ -7,6 +7,7 @@ import { Ticket } from '../models/Ticket.js';
 import { User } from '../models/User.js';
 import { SiteContent } from '../models/SiteContent.js';
 import { ContactMessage } from '../models/ContactMessage.js';
+import { ScanLog } from '../models/ScanLog.js';
 import { DEFAULT_TERMS_AND_CONDITIONS } from '../constants/terms.js';
 import { colorForTierName, normalizeHexColor } from '../constants/ticketTiers.js';
 import {
@@ -512,6 +513,63 @@ export const adminCancelBooking = asyncHandler(async (req, res) => {
 export const adminGetBookingTickets = asyncHandler(async (req, res) => {
   const tickets = await Ticket.find({ bookingId: req.params.id }).lean();
   res.json({ tickets });
+});
+
+/** Permanently remove a booking and its tickets / scan logs / seat holds. */
+export const adminDeleteBooking = asyncHandler(async (req, res) => {
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) throw new AppError('Booking not found', 404, 'NOT_FOUND');
+
+  const tickets = await Ticket.find({ bookingId: booking._id }).select('_id').lean();
+  const ticketIds = tickets.map((t) => t._id);
+
+  if (booking.items?.some((item) => item.seats?.length)) {
+    try {
+      await releaseBookingSeats(booking._id);
+    } catch {
+      /* seats may already be free for cancelled orders */
+    }
+  }
+
+  if (ticketIds.length) {
+    await ScanLog.deleteMany({ ticketId: { $in: ticketIds } });
+  }
+  await Ticket.deleteMany({ bookingId: booking._id });
+  await Booking.deleteOne({ _id: booking._id });
+  cacheDel('public:');
+  cacheDel('analytics:');
+
+  res.json({ deleted: true, id: String(booking._id) });
+});
+
+/** Wipe cancelled/rejected/expired test orders from admin lists (Analytics / Orders / Guests). */
+export const adminPurgeClosedBookings = asyncHandler(async (req, res) => {
+  const filter = {
+    status: { $in: ['cancelled', 'rejected', 'expired'] },
+  };
+  const bookings = await Booking.find(filter).select('_id items').lean();
+  if (!bookings.length) return res.json({ deleted: 0 });
+
+  const bookingIds = bookings.map((b) => b._id);
+  for (const b of bookings) {
+    if (b.items?.some((item) => item.seats?.length)) {
+      try {
+        await releaseBookingSeats(b._id);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const tickets = await Ticket.find({ bookingId: { $in: bookingIds } }).select('_id').lean();
+  const ticketIds = tickets.map((t) => t._id);
+  if (ticketIds.length) await ScanLog.deleteMany({ ticketId: { $in: ticketIds } });
+  await Ticket.deleteMany({ bookingId: { $in: bookingIds } });
+  const result = await Booking.deleteMany({ _id: { $in: bookingIds } });
+  cacheDel('public:');
+  cacheDel('analytics:');
+
+  res.json({ deleted: result.deletedCount || 0 });
 });
 
 /* ??? Gate Agents ??????????????????????????????????????????? */
